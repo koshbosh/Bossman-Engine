@@ -2210,3 +2210,74 @@ body {
 .tile-impact.haircut {
   color: var(--amber);
 }
+
+/* Keep the scoring summary compact and give detailed analysis room to breathe. */
+.results-container {
+  gap: 16px;
+}
+
+.kpi-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.kpi-card {
+  padding: 18px;
+}
+
+.hero-left {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.hero-right {
+  flex: 0 0 220px;
+}
+
+.analytics-split-grid {
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.factor-attribution-panel,
+.metrics-panel {
+  min-width: 0;
+  padding: 18px;
+}
+
+.panel-header {
+  gap: 8px;
+}
+
+.metrics-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.footnotes-panel {
+  padding: 16px 18px;
+}
+
+@media (max-width: 1250px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .hero-left,
+  .hero-right {
+    flex: 1 1 100%;
+  }
+
+  .kpi-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .analytics-split-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .factors-table {
+    min-width: 560px;
+  }
+}
