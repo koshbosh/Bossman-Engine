@@ -66,6 +66,8 @@ function switchMainView(viewName) {
 }
 
 // ── Market Macro Regime ───────────────────────────────────────────────
+let _cachedSectorEtfs = {};
+
 async function loadMarketRegime() {
   try {
     const res = await fetch('/api/market-regime');
@@ -76,21 +78,162 @@ async function loadMarketRegime() {
     const regimeSub = document.getElementById('regime-sub');
     const regimePill = document.getElementById('regime-rec-pill');
     const pulseDot = document.getElementById('regime-pulse');
+    const breadthBadge = document.getElementById('regime-breadth-badge');
+    const rspBadge = document.getElementById('regime-rsp-badge');
+    const vixBadge = document.getElementById('regime-vix-badge');
 
     if (regimeName && data.regime) {
       regimeName.textContent = `Macro: ${data.regime}`;
-      regimeSub.textContent = `SPY $${data.price} (${data.pct_vs_ma200 >= 0 ? '+' : ''}${data.pct_vs_ma200}% vs 200MA)`;
+      regimeSub.textContent = `SPY $${data.price} (${data.pct_vs_ma200 >= 0 ? '+' : ''}${data.pct_vs_ma200}% vs 200MA) | Updated: ${data.updated_at}`;
       if (pulseDot && data.color) {
         pulseDot.style.backgroundColor = data.color;
         pulseDot.style.boxShadow = `0 0 10px ${data.color}`;
       }
       if (regimePill && data.recommended_profiles && data.recommended_profiles.length > 0) {
-        regimePill.textContent = `Optimal: ${data.recommended_profiles[0]}`;
+        regimePill.textContent = `Optimal: ${data.recommended_profiles.join(' / ')}`;
       }
+    }
+
+    // Breadth badge
+    if (breadthBadge && data.breadth_50 !== undefined) {
+      breadthBadge.textContent = `Breadth: ${data.breadth_50}%`;
+      breadthBadge.className = 'macro-metric-badge';
+      if (data.breadth_50 < 35) breadthBadge.classList.add('highlight-dip');
+      else if (data.breadth_50 < 50) breadthBadge.classList.add('highlight-core');
+      else breadthBadge.classList.add('highlight-bull');
+    }
+
+    // RSP/SPY badge
+    if (rspBadge && data.rsp_spy_diff !== undefined) {
+      const sign = data.rsp_spy_diff >= 0 ? '+' : '';
+      rspBadge.textContent = `RSP/SPY: ${sign}${data.rsp_spy_diff.toFixed(1)}%`;
+      rspBadge.className = 'macro-metric-badge';
+      if (data.rsp_outperforming) rspBadge.classList.add('highlight-core');
+    }
+
+    // VIX badge
+    if (vixBadge && data.vix !== undefined) {
+      vixBadge.textContent = `VIX: ${data.vix.toFixed(1)}`;
+      vixBadge.className = 'macro-metric-badge';
+      if (data.vix >= 55) vixBadge.classList.add('highlight-vix-panic');
+      else if (data.vix >= 35) vixBadge.classList.add('highlight-dip');
+    }
+
+    // Cache sector ETFs for the radar modal
+    if (data.sector_etfs) {
+      _cachedSectorEtfs = data.sector_etfs;
     }
   } catch (err) {
     console.warn('Could not load market regime:', err);
   }
+}
+
+// ── Sector Radar Modal ────────────────────────────────────────────────
+const SECTOR_ETF_NAMES = {
+  XLK: 'Technology', XLF: 'Financials', XLV: 'Health Care', XLY: 'Cons. Discret.',
+  XLP: 'Cons. Staples', XLE: 'Energy', XLI: 'Industrials', XLU: 'Utilities',
+  XLB: 'Materials', XLRE: 'Real Estate', XLC: 'Comm. Services'
+};
+
+function toggleSectorModal(event) {
+  event.stopPropagation();
+  const modal = document.getElementById('sector-radar-modal');
+  if (modal.classList.contains('hidden')) {
+    renderSectorRadarGrid();
+    modal.classList.remove('hidden');
+  } else {
+    modal.classList.add('hidden');
+  }
+}
+
+function closeSectorModal(event) {
+  const modal = document.getElementById('sector-radar-modal');
+  modal.classList.add('hidden');
+}
+
+function renderSectorRadarGrid() {
+  const grid = document.getElementById('sector-radar-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  const etfs = Object.values(_cachedSectorEtfs);
+  if (etfs.length === 0) {
+    grid.innerHTML = '<p style="color: var(--text-dim); text-align: center; grid-column: 1/-1;">Loading sector data... Score a ticker or visit market regime first.</p>';
+    return;
+  }
+
+  // Sort: most oversold first (contrarian opportunities)
+  etfs.sort((a, b) => a.diff_pct - b.diff_pct);
+
+  etfs.forEach(etf => {
+    const isOpp = etf.diff_pct < 0;
+    const effPct = isOpp ? Math.min(15, Math.abs(etf.diff_pct)).toFixed(1) : Math.min(15, etf.diff_pct).toFixed(1);
+    const tile = document.createElement('div');
+    tile.className = `sector-radar-tile ${isOpp ? 'opportunity' : 'overextended'}`;
+    tile.innerHTML = `
+      <div class="tile-top">
+        <div class="tile-sym-group">
+          <span class="tile-sym">${etf.symbol}</span>
+          <span class="tile-name">${SECTOR_ETF_NAMES[etf.symbol] || ''}</span>
+        </div>
+        <span class="tile-badge ${isOpp ? 'opportunity' : 'overextended'}">${isOpp ? 'OPPORTUNITY' : 'OVEREXTENDED'}</span>
+      </div>
+      <div class="tile-prices">
+        <span>Price: $${etf.price.toFixed(2)}</span>
+        <span>50MA: $${etf.ma50.toFixed(2)}</span>
+      </div>
+      <div class="tile-diff-row">
+        <span class="tile-diff-val ${isOpp ? 'negative' : 'positive'}">${etf.diff_pct >= 0 ? '+' : ''}${etf.diff_pct.toFixed(2)}% vs 50MA</span>
+        <span class="tile-impact ${isOpp ? 'bonus' : 'haircut'}">${isOpp ? '+' : '-'}${effPct}% Score Impact</span>
+      </div>
+    `;
+    grid.appendChild(tile);
+  });
+}
+
+function renderSectorSubRegimeCard(sectorInfo) {
+  const badge = document.getElementById('res-sector-badge');
+  const etfSym = document.getElementById('res-sector-etf-sym');
+  const etfPrice = document.getElementById('res-sector-etf-price');
+  const diffVal = document.getElementById('res-sector-diff-val');
+  const statusBox = document.getElementById('res-sector-status-box');
+  const icon = document.getElementById('res-sector-icon');
+  const effectTag = document.getElementById('res-sector-effect-tag');
+  const descEl = document.getElementById('res-sector-desc');
+
+  if (!sectorInfo) {
+    if (badge) { badge.textContent = 'No Data'; badge.className = 'badge-flag neutral'; }
+    if (etfSym) etfSym.textContent = 'N/A';
+    if (etfPrice) etfPrice.textContent = '';
+    if (diffVal) diffVal.textContent = 'N/A';
+    if (effectTag) effectTag.textContent = 'Sector not mapped';
+    if (descEl) descEl.textContent = 'No matching GICS sector ETF found. Score impact: neutral.';
+    return;
+  }
+
+  const isOpp = sectorInfo.status === 'opportunity';
+  const etfData = _cachedSectorEtfs[sectorInfo.etf] || {};
+
+  if (badge) {
+    badge.textContent = isOpp ? '🎯 Contrarian Opportunity' : '⚠️ Rotation Exhaust Risk';
+    badge.className = `badge-flag ${isOpp ? 'success' : 'warning'}`;
+  }
+  if (etfSym) etfSym.textContent = sectorInfo.etf;
+  if (etfPrice) etfPrice.textContent = etfData.price ? `$${etfData.price.toFixed(2)}` : '';
+  if (diffVal) {
+    const diff = etfData.diff_pct !== undefined ? etfData.diff_pct : 0;
+    diffVal.textContent = `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%`;
+    diffVal.style.color = isOpp ? 'var(--emerald)' : 'var(--amber)';
+  }
+  if (statusBox) {
+    statusBox.style.borderLeftColor = isOpp ? 'var(--emerald)' : 'var(--amber)';
+  }
+  if (icon) icon.textContent = isOpp ? '🎯' : '⚠️';
+  if (effectTag) {
+    effectTag.textContent = sectorInfo.effect_str;
+    effectTag.className = `sector-effect-tag${isOpp ? '' : ' haircut'}`;
+  }
+  if (descEl) descEl.textContent = sectorInfo.desc;
 }
 
 // ── Profile Switching ─────────────────────────────────────────────────
@@ -297,6 +440,14 @@ function renderScoredResults(data) {
       levStatusBox.style.borderLeftColor = 'var(--rose)';
       levIcon.textContent = '🚨';
     }
+  }
+
+  // 4b. Sector Sub-Regime Card
+  renderSectorSubRegimeCard(data.sector_sub_regime);
+
+  // Update sector ETF cache if this score result includes regime data
+  if (data.market_regime && data.market_regime.sector_etfs) {
+    _cachedSectorEtfs = data.market_regime.sector_etfs;
   }
 
   // 5. Footnotes & Data Integrity Log

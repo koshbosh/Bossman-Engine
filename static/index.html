@@ -26,14 +26,25 @@
         </div>
       </div>
 
-      <!-- Macro Market Regime Indicator -->
+      <!-- Macro Market Regime Indicator & Sector Radar -->
       <div class="macro-regime-card" id="macro-regime-card">
         <div class="pulse-dot" id="regime-pulse"></div>
         <div class="regime-info">
-          <span class="regime-label" id="regime-name">Analyzing Market Regime...</span>
+          <div class="regime-top-row">
+            <span class="regime-label" id="regime-name">Analyzing Market Regime...</span>
+            <span class="macro-metric-badge" id="regime-breadth-badge">Breadth: --%</span>
+            <span class="macro-metric-badge" id="regime-rsp-badge">RSP/SPY: --</span>
+            <span class="macro-metric-badge" id="regime-vix-badge">VIX: --</span>
+          </div>
           <span class="regime-sub" id="regime-sub">SPY vs 50d / 200d MA</span>
         </div>
-        <div class="regime-rec-pill" id="regime-rec-pill">Optimal: Dip Hunter</div>
+        <div class="regime-actions">
+          <div class="regime-rec-pill" id="regime-rec-pill">Optimal: Dip Hunter</div>
+          <button class="sector-radar-btn" id="sector-radar-btn" onclick="toggleSectorModal(event)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+            <span>Sector Radar</span>
+          </button>
+        </div>
       </div>
 
       <!-- View Navigation Tabs -->
@@ -265,6 +276,43 @@
               <div class="leverage-rule-callout">
                 <span>Rule: Pure trend/momentum scores remain untainted. Leverage flags provide discretionary balance sheet context.</span>
               </div>
+          </div>
+
+          <!-- Card 4: Sector Sub-Regime & Rotation Opportunity -->
+          <div class="kpi-card glass-panel sector-sub-card">
+            <div class="card-header">
+              <span class="card-title">SECTOR SUB-REGIME & ROTATION</span>
+              <span class="badge-flag" id="res-sector-badge">Scanning</span>
+            </div>
+
+            <div class="sector-sub-body">
+              <div class="sector-metric-row">
+                <div class="sector-metric-col">
+                  <span class="sector-metric-sub">Benchmark Sector ETF</span>
+                  <div class="sector-etf-val-row">
+                    <span class="sector-etf-sym" id="res-sector-etf-sym">--</span>
+                    <span class="sector-etf-price" id="res-sector-etf-price">$0.00</span>
+                  </div>
+                </div>
+                <div class="sector-metric-col">
+                  <span class="sector-metric-sub">Distance vs 50MA</span>
+                  <span class="sector-metric-val" id="res-sector-diff-val">--%</span>
+                </div>
+              </div>
+
+              <div class="sector-status-box" id="res-sector-status-box">
+                <div class="status-icon" id="res-sector-icon">🎯</div>
+                <div class="status-content">
+                  <span class="sector-effect-tag" id="res-sector-effect-tag">--</span>
+                  <p class="status-desc" id="res-sector-desc">
+                    Sector rotation impact is dynamically calibrated based on ETF distance from 50MA.
+                  </p>
+                </div>
+              </div>
+
+              <div class="sector-rule-callout">
+                <span>Contrarian Rotation Logic: Stocks in oversold sectors (&lt;50MA) receive an asymmetric opportunity bonus (up to +15%); overextended sectors receive a rotation haircut (up to -15%).</span>
+              </div>
             </div>
           </div>
 
@@ -445,6 +493,25 @@
     </section>
 
   </main>
+
+  <!-- SECTOR SUB-REGIME RADAR MODAL -->
+  <div id="sector-radar-modal" class="modal-backdrop hidden" onclick="closeSectorModal(event)">
+    <div class="modal-card glass-panel" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-badge">11 GICS SECTOR ROTATION</div>
+          <h3>Sector Sub-Regime Radar</h3>
+        </div>
+        <button class="modal-close-btn" onclick="closeSectorModal(event)">&times;</button>
+      </div>
+      <p class="modal-sub">
+        Real-time tracking of the 11 GICS sector ETFs against their 50-day moving averages. Sectors below their 50MA represent unloved contrarian opportunity zones and award a score bonus; sectors overextended above their 50MA incur a rotation risk haircut.
+      </p>
+      <div class="sector-radar-grid" id="sector-radar-grid">
+        <!-- Dynamically rendered 11 sector ETF cards -->
+      </div>
+    </div>
+  </div>
 
   <!-- Footer -->
   <footer class="app-footer">

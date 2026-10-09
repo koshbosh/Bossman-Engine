@@ -56,6 +56,27 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASELINE_CSV = os.path.join(BASE_DIR, "scan_results_20261001.csv")
 
 
+SECTOR_TO_ETF = {
+    "Information Technology": "XLK",
+    "Technology": "XLK",
+    "Financials": "XLF",
+    "Financial Services": "XLF",
+    "Health Care": "XLV",
+    "Healthcare": "XLV",
+    "Consumer Discretionary": "XLY",
+    "Consumer Cyclical": "XLY",
+    "Consumer Staples": "XLP",
+    "Consumer Defensive": "XLP",
+    "Energy": "XLE",
+    "Industrials": "XLI",
+    "Utilities": "XLU",
+    "Materials": "XLB",
+    "Basic Materials": "XLB",
+    "Real Estate": "XLRE",
+    "Communication Services": "XLC",
+}
+
+
 def calculate_beta(stock_returns, market_returns):
     common = stock_returns.index.intersection(market_returns.index)
     if len(common) < 60:
@@ -82,6 +103,7 @@ class UniversalScoringEngine:
         ]
         self.spy_history = None
         self.market_regime = {}
+        self.sector_etf_data = {}
         self.load_baseline()
 
     def load_baseline(self):
@@ -112,58 +134,150 @@ class UniversalScoringEngine:
             self.sector_3mo_medians = {}
             self.sector_6mo_medians = {}
 
-        # Fetch SPY for market regime & beta
-        self.refresh_spy_market_status()
+        # Fetch macro indicators, Breadth, RSP/SPY, VIX & Sector ETFs
+        self.refresh_macro_and_sector_regimes()
 
-    def refresh_spy_market_status(self):
-        """Fetches SPY to determine market regime and baseline beta calculations."""
+    def refresh_macro_and_sector_regimes(self):
+        """
+        Computes composite macro market regime & sector sub-regimes:
+        1. Market Breadth: % of S&P 500 universe above 50MA (<35% Dip Hunter, <50% All-Weather Core).
+        2. RSP vs SPY 1-Month relative performance (penalizes Alpha Bull if RSP > SPY; penalizes All-Weather if SPY > RSP).
+        3. VIX circuit breakers: VIX > 35 -> Dip Hunter lock; VIX > 55 -> Bear Market Shield / Fundamental Bag lock.
+        4. Sector Sub-Regimes: tracks 11 GICS sector ETFs vs 50MA for contrarian score bonuses/haircuts.
+        """
+        # 1. Breadth from baseline
+        if not self.baseline_df.empty and "price" in self.baseline_df.columns and "ma_50" in self.baseline_df.columns:
+            clean_b = self.baseline_df.dropna(subset=["price", "ma_50"])
+            breadth_50 = float((clean_b["price"] > clean_b["ma_50"]).mean() * 100) if len(clean_b) > 0 else 50.0
+            breadth_200 = float((clean_b["price"] > clean_b["ma_200"]).mean() * 100) if "ma_200" in clean_b.columns else 50.0
+        else:
+            breadth_50 = 50.0
+            breadth_200 = 50.0
+
+        # 2. Batch download macro assets & sector ETFs
+        macro_syms = ["SPY", "RSP", "^VIX", "XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLU", "XLB", "XLRE", "XLC"]
         try:
-            spy = yf.Ticker("SPY")
-            hist = spy.history(period="2y")
-            if not hist.empty:
-                self.spy_history = hist["Close"]
-                p_now = float(hist["Close"].iloc[-1])
-                ma50 = float(hist["Close"].iloc[-50:].mean()) if len(hist) >= 50 else p_now
-                ma200 = float(hist["Close"].iloc[-200:].mean()) if len(hist) >= 200 else p_now
-
-                pct_ma50 = (p_now - ma50) / ma50 * 100
-                pct_ma200 = (p_now - ma200) / ma200 * 100
-
-                if p_now > ma50 and p_now > ma200:
-                    regime_name = "Bull Trend (Expansion)"
-                    recommended_profiles = ["Alpha Bull", "All-Weather Core"]
-                    regime_color = "#10b981"
-                elif p_now < ma200 and p_now < ma50:
-                    regime_name = "Bear Market / Correction"
-                    recommended_profiles = ["Bear Market Shield", "Fundamental Bag"]
-                    regime_color = "#ef4444"
-                else:
-                    regime_name = "Sideways / Choppy Consolidation"
-                    recommended_profiles = ["Dip Hunter", "All-Weather Core"]
-                    regime_color = "#f59e0b"
-
-                self.market_regime = {
-                    "symbol": "SPY",
-                    "price": round(p_now, 2),
-                    "ma50": round(ma50, 2),
-                    "ma200": round(ma200, 2),
-                    "pct_vs_ma50": round(pct_ma50, 2),
-                    "pct_vs_ma200": round(pct_ma200, 2),
-                    "regime": regime_name,
-                    "recommended_profiles": recommended_profiles,
-                    "color": regime_color,
-                    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
+            m_data = yf.download(macro_syms, period="2y", auto_adjust=True, progress=False)["Close"]
         except Exception as e:
-            print(f"[Engine] Error fetching SPY status: {e}")
-            self.market_regime = {
-                "symbol": "SPY",
-                "price": 0.0,
-                "regime": "Neutral / Undetermined",
-                "recommended_profiles": ["All-Weather Core"],
-                "color": "#6b7280",
-                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
+            print(f"[Engine] Error downloading macro assets: {e}")
+            m_data = pd.DataFrame()
+
+        # Extract SPY
+        if not m_data.empty and "SPY" in m_data.columns:
+            spy_s = m_data["SPY"].dropna()
+            self.spy_history = spy_s
+            p_now = float(spy_s.iloc[-1])
+            ma50 = float(spy_s.iloc[-50:].mean()) if len(spy_s) >= 50 else p_now
+            ma200 = float(spy_s.iloc[-200:].mean()) if len(spy_s) >= 200 else p_now
+            pct_ma50 = (p_now - ma50) / ma50 * 100
+            pct_ma200 = (p_now - ma200) / ma200 * 100
+        else:
+            p_now, ma50, ma200, pct_ma50, pct_ma200 = 0.0, 0.0, 0.0, 0.0, 0.0
+
+        # Extract VIX
+        vix_now = 18.0
+        if not m_data.empty and "^VIX" in m_data.columns:
+            vix_s = m_data["^VIX"].dropna()
+            if not vix_s.empty:
+                vix_now = float(vix_s.iloc[-1])
+
+        # Extract RSP vs SPY 1-Month relative return
+        rsp_spy_diff = 0.0
+        rsp_outperforming = False
+        if not m_data.empty and "RSP" in m_data.columns and "SPY" in m_data.columns:
+            rsp_s = m_data["RSP"].dropna()
+            spy_s = m_data["SPY"].dropna()
+            if len(rsp_s) >= 21 and len(spy_s) >= 21:
+                rsp_1mo = float(rsp_s.iloc[-1] / rsp_s.iloc[-21] - 1.0)
+                spy_1mo = float(spy_s.iloc[-1] / spy_s.iloc[-21] - 1.0)
+                rsp_spy_diff = round((rsp_1mo - spy_1mo) * 100, 2)
+                rsp_outperforming = (rsp_1mo > spy_1mo)
+
+        # 3. Macro Regime State Machine Logic
+        vix_override = None
+        if vix_now >= 55.0:
+            regime_name = "Systemic Crisis (VIX > 55 Override)"
+            recommended_profiles = ["Fundamental Bag", "Bear Market Shield"]
+            regime_reason = f"Extreme systemic crisis override (VIX at {vix_now:.1f}). Focus on balance-sheet solvency and deep value."
+            regime_color = "#ef4444"
+            vix_override = "crisis_55"
+        elif vix_now >= 35.0:
+            regime_name = "Panic Capitulation (VIX > 35 Override)"
+            recommended_profiles = ["Dip Hunter"]
+            regime_reason = f"Capitulation panic override (VIX at {vix_now:.1f}). High-probability asymmetric turnaround dip setups active."
+            regime_color = "#f59e0b"
+            vix_override = "panic_35"
+        else:
+            # Market Breadth + RSP/SPY logic
+            if breadth_50 < 35.0:
+                regime_name = f"Oversold Breadth ({breadth_50:.1f}% > 50MA)"
+                recommended_profiles = ["Dip Hunter"]
+                regime_reason = f"Broad market oversold: only {breadth_50:.1f}% of S&P 500 stocks above 50MA (<35% threshold). Prime for turnaround hunting."
+                regime_color = "#f59e0b"
+            elif breadth_50 < 50.0:
+                # 35% to 50% breadth: baseline All-Weather Core
+                # Check: if SPY outperforms RSP (narrow mega-cap rally), penalize All-Weather Core!
+                if not rsp_outperforming:
+                    regime_name = f"Narrow Breadth Divergence (SPY > RSP)"
+                    recommended_profiles = ["Dip Hunter", "Alpha Bull"]
+                    regime_reason = f"Breadth at {breadth_50:.1f}% with narrow mega-cap leadership (SPY > RSP by +{abs(rsp_spy_diff):.1f}%). All-Weather Core penalized."
+                    regime_color = "#fbbf24"
+                else:
+                    regime_name = f"Selective Consolidation ({breadth_50:.1f}% > 50MA)"
+                    recommended_profiles = ["All-Weather Core"]
+                    regime_reason = f"Breadth at {breadth_50:.1f}% with balanced RSP participation. Volatility-managed compounders favored."
+                    regime_color = "#38bdf8"
+            else:
+                # Breadth >= 50%: baseline Alpha Bull
+                # Check: if RSP outperforms SPY (broad cyclical participation, not mega-cap momentum), penalize Alpha Bull!
+                if rsp_outperforming:
+                    regime_name = f"Broad Market Expansion (RSP > SPY)"
+                    recommended_profiles = ["All-Weather Core"]
+                    regime_reason = f"Healthy breadth ({breadth_50:.1f}% > 50MA), but equal-weight RSP leads SPY by +{rsp_spy_diff:.1f}%. Alpha Bull penalized in favor of broad All-Weather Core."
+                    regime_color = "#34d399"
+                else:
+                    regime_name = f"Bull Momentum Expansion (Breadth {breadth_50:.1f}%)"
+                    recommended_profiles = ["Alpha Bull"]
+                    regime_reason = f"Strong breadth ({breadth_50:.1f}% > 50MA) with cap-weighted SPY momentum leadership. Aggressive trend following favored."
+                    regime_color = "#10b981"
+
+        # 4. Sector Sub-Regimes ETF calculation
+        self.sector_etf_data = {}
+        for etf in ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLU", "XLB", "XLRE", "XLC"]:
+            if not m_data.empty and etf in m_data.columns:
+                s = m_data[etf].dropna()
+                if len(s) >= 50:
+                    p = float(s.iloc[-1])
+                    ma50_val = float(s.iloc[-50:].mean())
+                    diff = (p - ma50_val) / ma50_val * 100
+                    self.sector_etf_data[etf] = {
+                        "symbol": etf,
+                        "price": round(p, 2),
+                        "ma50": round(ma50_val, 2),
+                        "diff_pct": round(diff, 2),
+                        "status": "below_50ma" if diff < 0 else "above_50ma",
+                    }
+
+        self.market_regime = {
+            "symbol": "SPY",
+            "price": round(p_now, 2),
+            "ma50": round(ma50, 2),
+            "ma200": round(ma200, 2),
+            "pct_vs_ma50": round(pct_ma50, 2),
+            "pct_vs_ma200": round(pct_ma200, 2),
+            "breadth_50": round(breadth_50, 1),
+            "breadth_200": round(breadth_200, 1),
+            "vix": round(vix_now, 2),
+            "vix_override": vix_override,
+            "rsp_spy_diff": rsp_spy_diff,
+            "rsp_outperforming": rsp_outperforming,
+            "regime": regime_name,
+            "recommended_profiles": recommended_profiles,
+            "regime_reason": regime_reason,
+            "color": regime_color,
+            "sector_etfs": self.sector_etf_data,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
 
     def fetch_ticker_data(self, ticker: str):
         """
@@ -641,6 +755,48 @@ class UniversalScoringEngine:
                 final_multiplier *= m_vol
                 multipliers_log.append({"name": "Institutional Volume Surge Bonus", "effect": f"+{(m_vol-1)*100:.1f}%", "value": m_vol})
 
+        # ── Sector Sub-Regime Contrarian Score Impact ─────────────────
+        # When sector ETF is below 50MA -> Opportunity bonus (+0% to +15%)
+        # When sector ETF is above 50MA -> Overextension haircut (-0% to -15%)
+        sector_sub_regime_info = None
+        etf_sym = SECTOR_TO_ETF.get(ticker_data["sector"])
+        if etf_sym and etf_sym in self.sector_etf_data:
+            etf_entry = self.sector_etf_data[etf_sym]
+            etf_diff = etf_entry["diff_pct"] / 100.0
+
+            if etf_diff < 0:
+                sec_sub_mult = 1.0 + min(0.15, abs(etf_diff))
+                final_multiplier *= sec_sub_mult
+                multipliers_log.append({
+                    "name": f"Sector Opportunity Bonus ({ticker_data['sector']} / {etf_sym})",
+                    "effect": f"+{(sec_sub_mult - 1.0) * 100:.1f}%",
+                    "value": round(sec_sub_mult, 4),
+                })
+                sector_sub_regime_info = {
+                    "etf": etf_sym,
+                    "status": "opportunity",
+                    "label": f"Below 50MA Opportunity Zone ({etf_entry['diff_pct']:+.1f}%)",
+                    "badge_color": "success",
+                    "effect_str": f"+{(sec_sub_mult - 1.0) * 100:.1f}% Score Bonus",
+                    "desc": f"Sector ETF ({etf_sym}) is {abs(etf_entry['diff_pct']):.1f}% below its 50MA. Favorable contrarian turnaround setup.",
+                }
+            else:
+                sec_sub_mult = max(0.85, 1.0 - min(0.15, etf_diff))
+                final_multiplier *= sec_sub_mult
+                multipliers_log.append({
+                    "name": f"Sector Overextension Haircut ({ticker_data['sector']} / {etf_sym})",
+                    "effect": f"-{(1.0 - sec_sub_mult) * 100:.1f}%",
+                    "value": round(sec_sub_mult, 4),
+                })
+                sector_sub_regime_info = {
+                    "etf": etf_sym,
+                    "status": "overextended",
+                    "label": f"Above 50MA Overextended ({etf_entry['diff_pct']:+.1f}%)",
+                    "badge_color": "warning",
+                    "effect_str": f"-{(1.0 - sec_sub_mult) * 100:.1f}% Score Haircut",
+                    "desc": f"Sector ETF ({etf_sym}) is +{etf_entry['diff_pct']:.1f}% above its 50MA. Sector extended; rotation exhaust risk.",
+                }
+
         # 8. Compute Raw Score and Scaled Score (0-100)
         raw_final_score = base_score * final_multiplier
         # Normalization scale: typical raw score is around 0.4 - 0.9. Map cleanly to 0-100
@@ -706,6 +862,7 @@ class UniversalScoringEngine:
             "universe_percentile": universe_percentile,
             "forecast": forecast,
             "leverage_flag": de_flag,
+            "sector_sub_regime": sector_sub_regime_info,
             "footnotes": footnotes,
             "factor_breakdown": active_factors,
             "omitted_factors": omitted_factors,
