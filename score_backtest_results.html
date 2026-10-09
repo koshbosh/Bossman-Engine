@@ -1,0 +1,237 @@
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Score vs Return Correlation - Basak Bossman Engine</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            h1, h2, h3 { color: #58a6ff; }
+            .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+            .chart-container { position: relative; height: 400px; width: 100%; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            th, td { border: 1px solid #30363d; padding: 8px 12px; text-align: left; }
+            th { background-color: #21262d; }
+            .positive { color: #3fb950; }
+            .negative { color: #f85149; }
+            .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 20px; }
+            .metric-box { background-color: #21262d; border-radius: 6px; padding: 15px; text-align: center; border: 1px solid #30363d; }
+            .metric-value { font-size: 24px; font-weight: bold; margin-top: 5px; color: #58a6ff; }
+            .profile-section { border-bottom: 1px solid #30363d; padding-bottom: 20px; margin-bottom: 20px; }
+            .profile-section:last-child { border-bottom: none; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Score vs. Forward Return Correlation (10-Year Backtest)</h1>
+            <p><strong>N = 279,140 observations</strong> | Data excludes survivorship bias.</p>
+            
+            <div class="card">
+                <h2>Statistical Significance per Profile</h2>
+                <p><em>OLS Regression: Forward 1M Return ~ Recommendation Score</em></p>
+    
+                <div class="profile-section">
+                    <h3>Bear Market Shield</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <div>OLS Coef</div>
+                            <div class="metric-value negative">
+                                -0.000937
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>t-statistic</div>
+                            <div class="metric-value negative">
+                                -2.44
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>p-value</div>
+                            <div class="metric-value">
+                                1.4675e-02
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>Spearman Corr</div>
+                            <div class="metric-value negative">
+                                -0.0035
+                            </div>
+                        </div>
+                    </div>
+                </div>
+        
+                <div class="profile-section">
+                    <h3>Fundamental Bag</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <div>OLS Coef</div>
+                            <div class="metric-value negative">
+                                -0.000773
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>t-statistic</div>
+                            <div class="metric-value negative">
+                                -2.01
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>p-value</div>
+                            <div class="metric-value">
+                                4.4307e-02
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>Spearman Corr</div>
+                            <div class="metric-value negative">
+                                -0.0026
+                            </div>
+                        </div>
+                    </div>
+                </div>
+        
+                <div class="profile-section">
+                    <h3>All-Weather Core</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <div>OLS Coef</div>
+                            <div class="metric-value negative">
+                                -0.000170
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>t-statistic</div>
+                            <div class="metric-value ">
+                                -0.44
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>p-value</div>
+                            <div class="metric-value">
+                                6.5722e-01
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>Spearman Corr</div>
+                            <div class="metric-value positive">
+                                0.0003
+                            </div>
+                        </div>
+                    </div>
+                </div>
+        
+                <div class="profile-section">
+                    <h3>Dip Hunter</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <div>OLS Coef</div>
+                            <div class="metric-value positive">
+                                0.000412
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>t-statistic</div>
+                            <div class="metric-value ">
+                                1.07
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>p-value</div>
+                            <div class="metric-value">
+                                2.8321e-01
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>Spearman Corr</div>
+                            <div class="metric-value positive">
+                                0.0041
+                            </div>
+                        </div>
+                    </div>
+                </div>
+        
+                <div class="profile-section">
+                    <h3>Alpha Bull</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <div>OLS Coef</div>
+                            <div class="metric-value positive">
+                                0.000518
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>t-statistic</div>
+                            <div class="metric-value ">
+                                1.35
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>p-value</div>
+                            <div class="metric-value">
+                                1.7760e-01
+                            </div>
+                        </div>
+                        <div class="metric-box">
+                            <div>Spearman Corr</div>
+                            <div class="metric-value positive">
+                                0.0047
+                            </div>
+                        </div>
+                    </div>
+                </div>
+        
+            </div>
+    <div class="card"><h2>Quintile Analysis (Annualized Returns)</h2><h3>Bear Market Shield</h3><table><tr><th>Quintile</th><th>Mean Annualized Return</th></tr><tr><td>Q1_Highest</td><td class='positive'>13.12%</td></tr><tr><td>Q2</td><td class='positive'>12.79%</td></tr><tr><td>Q3</td><td class='positive'>11.29%</td></tr><tr><td>Q4</td><td class='positive'>12.85%</td></tr><tr><td>Q5_Lowest</td><td class='positive'>15.42%</td></tr></table><h3>Fundamental Bag</h3><table><tr><th>Quintile</th><th>Mean Annualized Return</th></tr><tr><td>Q1_Highest</td><td class='positive'>12.62%</td></tr><tr><td>Q2</td><td class='positive'>13.11%</td></tr><tr><td>Q3</td><td class='positive'>11.94%</td></tr><tr><td>Q4</td><td class='positive'>12.89%</td></tr><tr><td>Q5_Lowest</td><td class='positive'>14.92%</td></tr></table><h3>All-Weather Core</h3><table><tr><th>Quintile</th><th>Mean Annualized Return</th></tr><tr><td>Q1_Highest</td><td class='positive'>13.58%</td></tr><tr><td>Q2</td><td class='positive'>12.89%</td></tr><tr><td>Q3</td><td class='positive'>12.34%</td></tr><tr><td>Q4</td><td class='positive'>12.01%</td></tr><tr><td>Q5_Lowest</td><td class='positive'>14.64%</td></tr></table><h3>Dip Hunter</h3><table><tr><th>Quintile</th><th>Mean Annualized Return</th></tr><tr><td>Q1_Highest</td><td class='positive'>14.99%</td></tr><tr><td>Q2</td><td class='positive'>12.59%</td></tr><tr><td>Q3</td><td class='positive'>11.96%</td></tr><tr><td>Q4</td><td class='positive'>12.07%</td></tr><tr><td>Q5_Lowest</td><td class='positive'>13.85%</td></tr></table><h3>Alpha Bull</h3><table><tr><th>Quintile</th><th>Mean Annualized Return</th></tr><tr><td>Q1_Highest</td><td class='positive'>15.28%</td></tr><tr><td>Q2</td><td class='positive'>11.38%</td></tr><tr><td>Q3</td><td class='positive'>13.34%</td></tr><tr><td>Q4</td><td class='positive'>12.97%</td></tr><tr><td>Q5_Lowest</td><td class='positive'>12.50%</td></tr></table>
+                <div class="chart-container">
+                    <canvas id="quintileChart"></canvas>
+                </div>
+            </div>
+            
+            <script>
+                const ctx = document.getElementById('quintileChart').getContext('2d');
+                const chartData = {"Bear Market Shield": [0.13121241000015055, 0.12788027814512176, 0.11285825918992648, 0.1284725138799534, 0.15419883928375067], "Fundamental Bag": [0.1261594111860562, 0.1310642980893933, 0.11936149128475337, 0.12888335400233727, 0.14915406788335053], "All-Weather Core": [0.13584965320624148, 0.12891590298728042, 0.12336042727168545, 0.12010332462974188, 0.14639233562763185], "Dip Hunter": [0.14993198081413095, 0.12592896394944772, 0.11961166198271656, 0.12065892150963321, 0.13848989772151937], "Alpha Bull": [0.15277446709878034, 0.11376881056821166, 0.13337652840208092, 0.1296917389295193, 0.12500960090219781]};
+                
+                // Use All-Weather Core for the main chart, or the first available
+                const activeProfile = 'All-Weather Core' in chartData ? 'All-Weather Core' : Object.keys(chartData)[0];
+                const data = chartData[activeProfile];
+                
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Q1 (Highest Score)', 'Q2', 'Q3', 'Q4', 'Q5 (Lowest Score)'],
+                        datasets: [{
+                            label: `Annualized Return (${activeProfile})`,
+                            data: [data[0]*100, data[1]*100, data[2]*100, data[3]*100, data[4]*100],
+                            backgroundColor: [
+                                '#3fb950', '#2ea043', '#8b949e', '#f85149', '#da3633'
+                            ],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { labels: { color: '#c9d1d9' } }
+                        },
+                        scales: {
+                            y: {
+                                title: { display: true, text: 'Annualized Return (%)', color: '#c9d1d9' },
+                                ticks: { color: '#c9d1d9' },
+                                grid: { color: '#30363d' }
+                            },
+                            x: {
+                                ticks: { color: '#c9d1d9' },
+                                grid: { color: '#30363d' }
+                            }
+                        }
+                    }
+                });
+            </script>
+        </div>
+    </body>
+    </html>
+    

@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basak Bossman Engine — Quantitative Stock Scorer & Intelligence Terminal</title>
+  <meta name="description" content="Institutional-grade multi-factor stock scoring engine and statistical return forecasting for any global equity.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <!-- Ambient background glow elements -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+
+  <!-- Top Navigation & Macro Status Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand-group">
+        <div class="brand-badge">BBE</div>
+        <div class="brand-text">
+          <span class="brand-title">BASAK BOSSMAN ENGINE</span>
+          <span class="brand-sub">HYBRID V2.3 • DYNAMIC QUANT CORE</span>
+        </div>
+      </div>
+
+      <!-- Macro Market Regime Indicator -->
+      <div class="macro-regime-card" id="macro-regime-card">
+        <div class="pulse-dot" id="regime-pulse"></div>
+        <div class="regime-info">
+          <span class="regime-label" id="regime-name">Analyzing Market Regime...</span>
+          <span class="regime-sub" id="regime-sub">SPY vs 50d / 200d MA</span>
+        </div>
+        <div class="regime-rec-pill" id="regime-rec-pill">Optimal: Dip Hunter</div>
+      </div>
+
+      <!-- View Navigation Tabs -->
+      <nav class="view-nav">
+        <button class="nav-tab active" id="tab-single" onclick="switchMainView('single')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          Single Ticker Scorer
+        </button>
+        <button class="nav-tab" id="tab-scan" onclick="switchMainView('scan')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"></path><path d="M18 9l-5 5-4-4-6 6"></path></svg>
+          Market Universe Scanner
+        </button>
+        <button class="nav-tab" id="tab-compare" onclick="switchMainView('compare')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="18"></rect><rect x="14" y="3" width="7" height="18"></rect></svg>
+          Multi-Stock Compare
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-layout">
+
+    <!-- VIEW 1: SINGLE TICKER SCORER -->
+    <section id="view-single" class="view-panel active">
+      
+      <!-- Search & Controls Bar -->
+      <div class="control-bar glass-panel">
+        <div class="search-form-group">
+          <label for="ticker-input" class="visually-hidden">Stock Ticker Symbol</label>
+          <div class="input-wrapper">
+            <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="ticker-input" placeholder="Enter any ticker (e.g. NVDA, PLTR, TSLA, AAPL, ARM, BABA)..." autocomplete="off" spellcheck="false" maxlength="10">
+            <button id="score-btn" class="btn-primary" onclick="scoreCurrentTicker()">
+              <span>Score Ticker</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Quick Ticker Suggestions -->
+        <div class="quick-chips-row">
+          <span class="chips-label">Quick Analyze:</span>
+          <div class="chips-container" id="quick-chips">
+            <button class="chip-btn" onclick="selectQuickTicker('NVDA')">NVDA</button>
+            <button class="chip-btn" onclick="selectQuickTicker('PLTR')">PLTR</button>
+            <button class="chip-btn" onclick="selectQuickTicker('TSLA')">TSLA</button>
+            <button class="chip-btn" onclick="selectQuickTicker('AAPL')">AAPL</button>
+            <button class="chip-btn" onclick="selectQuickTicker('MSFT')">MSFT</button>
+            <button class="chip-btn" onclick="selectQuickTicker('AMZN')">AMZN</button>
+            <button class="chip-btn" onclick="selectQuickTicker('AMD')">AMD</button>
+            <button class="chip-btn" onclick="selectQuickTicker('BA')">BA (Boeing)</button>
+          </div>
+        </div>
+
+        <!-- Risk Profile Selection Tabs -->
+        <div class="profile-selector-group">
+          <div class="profile-header-meta">
+            <span class="profile-label">Select Scoring Strategy / Risk Appetite:</span>
+            <span class="profile-desc" id="profile-active-desc">Turnarounds, inverted 1y momentum, deep discount bonuses below 200MA.</span>
+          </div>
+          <div class="profile-tabs" id="profile-tabs">
+            <button class="profile-tab active" data-profile="Dip Hunter" onclick="changeProfile('Dip Hunter')">
+              <span class="p-title">Dip Hunter</span>
+              <span class="p-sub">Turnarounds & Dips</span>
+            </button>
+            <button class="profile-tab" data-profile="Alpha Bull" onclick="changeProfile('Alpha Bull')">
+              <span class="p-title">Alpha Bull</span>
+              <span class="p-sub">Aggressive Momentum</span>
+            </button>
+            <button class="profile-tab" data-profile="All-Weather Core" onclick="changeProfile('All-Weather Core')">
+              <span class="p-title">All-Weather Core</span>
+              <span class="p-sub">Risk-Weighted Stability</span>
+            </button>
+            <button class="profile-tab" data-profile="Bear Market Shield" onclick="changeProfile('Bear Market Shield')">
+              <span class="p-title">Bear Market Shield</span>
+              <span class="p-sub">Capital Preservation</span>
+            </button>
+            <button class="profile-tab" data-profile="Fundamental Bag" onclick="changeProfile('Fundamental Bag')">
+              <span class="p-title">Fundamental Bag</span>
+              <span class="p-sub">Deep Value Discipline</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Loading State Overlay -->
+      <div id="loading-state" class="loading-container glass-panel hidden">
+        <div class="spinner"></div>
+        <div class="loading-text" id="loading-text">Fetching live data & computing multi-factor scores for <span id="loading-ticker">...</span></div>
+        <div class="loading-sub">Running MA proximity, RSI, volatility, baseline percentile rankings & OLS inference</div>
+      </div>
+
+      <!-- Main Results Display Panel -->
+      <div id="results-display" class="results-container">
+        
+        <!-- Stock Title & Header Bar -->
+        <div class="ticker-hero-card glass-panel">
+          <div class="hero-left">
+            <div class="ticker-badge-row">
+              <h1 class="ticker-symbol" id="res-ticker">PLTR</h1>
+              <span class="company-name" id="res-name">Palantir Technologies Inc.</span>
+              <span class="sector-pill" id="res-sector">Technology</span>
+              <span class="industry-pill" id="res-industry">Software - Infrastructure</span>
+            </div>
+            <div class="meta-stats-row">
+              <span class="meta-item">Market Cap: <strong id="res-market-cap">$185.4B</strong></span>
+              <span class="meta-divider">•</span>
+              <span class="meta-item">Profile: <strong id="res-profile">Dip Hunter</strong></span>
+              <span class="meta-divider">•</span>
+              <span class="meta-item">Universe Baseline: <strong>S&P 500 & Global Equities</strong></span>
+              <span class="meta-divider" id="res-baseline-divider" style="display: none;">•</span>
+              <span class="meta-item" id="res-baseline-pill" style="display: none; background: rgba(56, 189, 248, 0.12); color: #38bdf8; padding: 2px 8px; border-radius: 4px; font-size: 11px;"></span>
+            </div>
+          </div>
+          <div class="hero-right">
+            <div class="price-display">
+              <span class="live-price" id="res-price">$0.00</span>
+              <span class="perf-badge" id="res-perf-1w">+0.0% (1w)</span>
+            </div>
+            <div class="range-meter-container">
+              <div class="range-labels">
+                <span id="res-52low">52W Low: $0.00</span>
+                <span id="res-52high">52W High: $0.00</span>
+              </div>
+              <div class="range-track">
+                <div class="range-fill" id="res-range-fill"></div>
+                <div class="range-thumb" id="res-range-thumb"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3-Column Top Intelligence Cards -->
+        <div class="kpi-grid">
+          
+          <!-- Card 1: Engine Score & Recommendation Gauge -->
+          <div class="kpi-card glass-panel score-card">
+            <div class="card-header">
+              <span class="card-title">ENGINE RECOMMENDATION SCORE</span>
+              <span class="card-tag" id="res-percentile-tag">Top 5% Universe</span>
+            </div>
+            
+            <div class="score-gauge-wrapper">
+              <svg class="score-gauge" viewBox="0 0 160 160">
+                <circle class="gauge-bg" cx="80" cy="80" r="68"></circle>
+                <circle class="gauge-fill" id="gauge-fill-circle" cx="80" cy="80" r="68"></circle>
+              </svg>
+              <div class="gauge-content">
+                <span class="gauge-score-value" id="res-score">--</span>
+                <span class="gauge-score-denom">/ 100</span>
+              </div>
+            </div>
+
+            <div class="stance-badge" id="res-stance-badge">
+              <span id="res-stance-text">Analyzing</span>
+            </div>
+            <p class="score-footnote" id="res-score-summary">Relative percentile ranking across market features.</p>
+          </div>
+
+          <!-- Card 2: OLS Return Forecast & Prediction Interval -->
+          <div class="kpi-card glass-panel forecast-card">
+            <div class="card-header">
+              <span class="card-title">OLS STATISTICAL FORECAST</span>
+              <span class="card-tag model-tag">1-Year Horizon</span>
+            </div>
+
+            <div class="forecast-body">
+              <div class="forecast-metric-group">
+                <span class="forecast-label">Expected 1-Year Forward Return</span>
+                <div class="forecast-value-row">
+                  <span class="forecast-number" id="res-exp-return">--%</span>
+                  <span class="forecast-se" id="res-exp-se">±0.0% SE</span>
+                </div>
+              </div>
+
+              <!-- 95% Confidence Interval Band -->
+              <div class="ci-band-wrapper">
+                <div class="ci-band-header">
+                  <span>95% Confidence Interval</span>
+                  <strong id="res-ci-range">[--%, --%]</strong>
+                </div>
+                <div class="ci-visual-bar">
+                  <div class="ci-zero-line"></div>
+                  <div class="ci-range-span" id="res-ci-span"></div>
+                  <div class="ci-point-estimate" id="res-ci-point"></div>
+                </div>
+              </div>
+
+              <!-- Probability of Positive Return Bar -->
+              <div class="prob-wrapper">
+                <div class="prob-header">
+                  <span>Win Probability (Return > 0%)</span>
+                  <strong id="res-prob-val">--%</strong>
+                </div>
+                <div class="prob-track">
+                  <div class="prob-fill" id="res-prob-fill" style="width: 50%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 3: Non-Punitive Balance Sheet & Solvency Flag -->
+          <div class="kpi-card glass-panel leverage-card">
+            <div class="card-header">
+              <span class="card-title">BALANCE SHEET & SOLVENCY FLAG</span>
+              <span class="badge-flag" id="res-de-badge">Evaluated</span>
+            </div>
+
+            <div class="leverage-body">
+              <div class="leverage-ratio-row">
+                <div class="lev-metric">
+                  <span class="lev-sub">Debt-to-Equity</span>
+                  <span class="lev-val" id="res-de-val">--</span>
+                </div>
+                <div class="lev-metric">
+                  <span class="lev-sub">Sector Benchmark</span>
+                  <span class="lev-val" id="res-de-benchmark">--</span>
+                </div>
+              </div>
+
+              <div class="leverage-status-box" id="res-de-status-box">
+                <div class="status-icon" id="res-de-icon">🛡️</div>
+                <p class="status-desc" id="res-de-desc">
+                  Debt-to-Equity is assessed strictly as an informational risk flag. In accordance with quantitative principles, it is NOT penalized via arbitrary score reduction.
+                </p>
+              </div>
+
+              <div class="leverage-rule-callout">
+                <span>Rule: Pure trend/momentum scores remain untainted. Leverage flags provide discretionary balance sheet context.</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Footnotes & Dynamic Factor Rebasing Callout Panel -->
+        <div class="footnotes-panel glass-panel" id="footnotes-panel">
+          <div class="footnotes-header">
+            <div class="fn-title-group">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+              <span>MODEL FOOTNOTES & DATA INTEGRITY LOG</span>
+            </div>
+            <span class="fn-badge" id="fn-count-badge">0 Footnotes</span>
+          </div>
+          <div class="footnotes-list" id="footnotes-list">
+            <!-- Dynamically injected footnotes -->
+          </div>
+        </div>
+
+        <!-- Factor Attribution & Technical Breakdown Section -->
+        <div class="analytics-split-grid">
+          
+          <!-- Factor Attribution Waterfall -->
+          <div class="factor-attribution-panel glass-panel">
+            <div class="panel-header">
+              <h3>Factor Attribution & Dynamic Weight Rebasing</h3>
+              <span class="sub-text">Weights rescaled to 100% across valid signals</span>
+            </div>
+
+            <div class="factors-table-wrapper">
+              <table class="factors-table">
+                <thead>
+                  <tr>
+                    <th>Factor</th>
+                    <th>Raw Value</th>
+                    <th>Univ. Rank</th>
+                    <th>Weight</th>
+                    <th>Contribution</th>
+                  </tr>
+                </thead>
+                <tbody id="factors-table-body">
+                  <!-- Dynamically populated rows -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Active Multipliers & Bonuses -->
+            <div class="multipliers-section">
+              <h4>Active Rules, Multipliers & Bonuses</h4>
+              <div class="multipliers-pill-container" id="multipliers-container">
+                <!-- Dynamically populated multipliers -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Technical & Fundamental Metrics Radar -->
+          <div class="metrics-panel glass-panel">
+            <div class="panel-header">
+              <h3>Technical & Fundamental Key Metrics</h3>
+              <span class="sub-text">Current quantitative parameters</span>
+            </div>
+
+            <div class="metrics-grid" id="metrics-grid">
+              <div class="metric-box">
+                <span class="m-label">50-Day Moving Avg</span>
+                <span class="m-value" id="m-ma50">--</span>
+                <span class="m-sub" id="m-ma50-diff">-- vs 50MA</span>
+              </div>
+              <div class="metric-box">
+                <span class="m-label">200-Day Moving Avg</span>
+                <span class="m-value" id="m-ma200">--</span>
+                <span class="m-sub" id="m-ma200-diff">-- vs 200MA</span>
+              </div>
+              <div class="metric-box">
+                <span class="m-label">RSI (14-Day)</span>
+                <span class="m-value" id="m-rsi">--</span>
+                <span class="m-sub" id="m-rsi-stance">--</span>
+              </div>
+              <div class="metric-box">
+                <span class="m-label">Annualized Volatility</span>
+                <span class="m-value" id="m-vol">--</span>
+                <span class="m-sub">252-day window</span>
+              </div>
+              <div class="metric-box">
+                <span class="m-label">Beta (vs SPY)</span>
+                <span class="m-value" id="m-beta">--</span>
+                <span class="m-sub">Market correlation</span>
+              </div>
+              <div class="metric-box">
+                <span class="m-label">Trailing P/E Ratio</span>
+                <span class="m-value" id="m-pe">--</span>
+                <span class="m-sub">LTM Valuation</span>
+              </div>
+              <div class="metric-box">
+                <span class="m-label">PEG Ratio</span>
+                <span class="m-value" id="m-peg">--</span>
+                <span class="m-sub">Growth-adjusted</span>
+              </div>
+              <div class="metric-box">
+                <span class="m-label">1-Year Momentum</span>
+                <span class="m-value" id="m-mom1y">--</span>
+                <span class="m-sub">Trailing 252d</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- VIEW 2: UNIVERSE SCANNER -->
+    <section id="view-scan" class="view-panel hidden">
+      <div class="scanner-header-card glass-panel">
+        <div class="scanner-title-group">
+          <h2>Market Universe Automated Scanner</h2>
+          <p>Top ranked opportunities generated by the Basak Bossman Engine across the broader equity universe.</p>
+        </div>
+        <div class="scanner-controls">
+          <div class="scanner-profile-select">
+            <label for="scan-profile-select">Select Strategy:</label>
+            <select id="scan-profile-select" onchange="runUniverseScan()">
+              <option value="Dip Hunter" selected>Dip Hunter (Turnarounds & Reversals)</option>
+              <option value="Alpha Bull">Alpha Bull (Aggressive Momentum)</option>
+              <option value="All-Weather Core">All-Weather Core (Volatility-Weighted)</option>
+              <option value="Bear Market Shield">Bear Market Shield (Defensive)</option>
+              <option value="Fundamental Bag">Fundamental Bag (Deep Value)</option>
+            </select>
+          </div>
+          <button class="btn-secondary" onclick="runUniverseScan()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            Refresh Scan
+          </button>
+        </div>
+      </div>
+
+      <div class="scanner-table-card glass-panel">
+        <div class="table-responsive">
+          <table class="scanner-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Ticker</th>
+                <th>Sector</th>
+                <th>Price</th>
+                <th>1-Year Mom</th>
+                <th>RSI (14)</th>
+                <th>P/E</th>
+                <th>Score</th>
+                <th>Exp. Return</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="scan-table-body">
+              <!-- Dynamically rendered -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 3: MULTI-TICKER COMPARE -->
+    <section id="view-compare" class="view-panel hidden">
+      <div class="compare-header-card glass-panel">
+        <div class="compare-title-group">
+          <h2>Head-to-Head Stock Comparison</h2>
+          <p>Score multiple arbitrary tickers simultaneously across the same risk profile.</p>
+        </div>
+        <div class="compare-input-bar">
+          <input type="text" id="compare-input" placeholder="Enter comma-separated tickers (e.g. NVDA, AMD, INTC, TSM, AVGO)..." value="NVDA, AMD, INTC, PLTR">
+          <button class="btn-primary" onclick="runCompare()">Compare Stocks</button>
+        </div>
+      </div>
+
+      <div class="compare-cards-grid" id="compare-grid">
+        <!-- Dynamically rendered comparison cards -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    <div class="footer-content">
+      <span>Basak Bossman Engine v2.3 • Built with Dynamic Factor Rebasing & Statistical Inference</span>
+      <span class="disclaimer">Quantitative research tool for educational and analytical purposes. Not financial advice.</span>
+    </div>
+  </footer>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,252 @@
+{
+  "Alpha Bull": {
+    "2W": {
+      "q1_ann_return": 8.7945,
+      "q5_ann_return": 5866.9357,
+      "spread": -5858.1412,
+      "spearman_ic": 0.0143
+    },
+    "1M": {
+      "q1_ann_return": 3.0538,
+      "q5_ann_return": 708.865,
+      "spread": -705.8112,
+      "spearman_ic": 0.0099
+    },
+    "2M": {
+      "q1_ann_return": 0.6984,
+      "q5_ann_return": 2.3464,
+      "spread": -1.648,
+      "spearman_ic": 0.0089
+    },
+    "3M": {
+      "q1_ann_return": 0.4571,
+      "q5_ann_return": 1.6977,
+      "spread": -1.2406,
+      "spearman_ic": 0.0082
+    },
+    "4M": {
+      "q1_ann_return": 0.3781,
+      "q5_ann_return": 0.6086,
+      "spread": -0.2305,
+      "spearman_ic": 0.0079
+    },
+    "6M": {
+      "q1_ann_return": 0.2923,
+      "q5_ann_return": 0.3002,
+      "spread": -0.0079,
+      "spearman_ic": 0.0205
+    },
+    "12M": {
+      "q1_ann_return": 0.2127,
+      "q5_ann_return": 0.2087,
+      "spread": 0.004,
+      "spearman_ic": 0.0247
+    },
+    "24M": {
+      "q1_ann_return": 0.1731,
+      "q5_ann_return": 0.1766,
+      "spread": -0.0035,
+      "spearman_ic": 0.0289
+    }
+  },
+  "Dip Hunter": {
+    "2W": {
+      "q1_ann_return": 5038.2511,
+      "q5_ann_return": 1615.4504,
+      "spread": 3422.8007,
+      "spearman_ic": 0.001
+    },
+    "1M": {
+      "q1_ann_return": 707.0213,
+      "q5_ann_return": 5.6474,
+      "spread": 701.3738,
+      "spearman_ic": 0.0052
+    },
+    "2M": {
+      "q1_ann_return": 1.0769,
+      "q5_ann_return": 2.1103,
+      "spread": -1.0335,
+      "spearman_ic": 0.0042
+    },
+    "3M": {
+      "q1_ann_return": 0.5469,
+      "q5_ann_return": 0.5948,
+      "spread": -0.0479,
+      "spearman_ic": 0.004
+    },
+    "4M": {
+      "q1_ann_return": 0.4219,
+      "q5_ann_return": 0.4299,
+      "spread": -0.0079,
+      "spearman_ic": 0.0057
+    },
+    "6M": {
+      "q1_ann_return": 0.3062,
+      "q5_ann_return": 0.352,
+      "spread": -0.0458,
+      "spearman_ic": -0.0054
+    },
+    "12M": {
+      "q1_ann_return": 0.211,
+      "q5_ann_return": 0.2394,
+      "spread": -0.0284,
+      "spearman_ic": -0.0079
+    },
+    "24M": {
+      "q1_ann_return": 0.1755,
+      "q5_ann_return": 0.185,
+      "spread": -0.0094,
+      "spearman_ic": -0.0005
+    }
+  },
+  "Fundamental Bag": {
+    "2W": {
+      "q1_ann_return": 5850.4958,
+      "q5_ann_return": 1619.5488,
+      "spread": 4230.947,
+      "spearman_ic": -0.0111
+    },
+    "1M": {
+      "q1_ann_return": 708.6139,
+      "q5_ann_return": 5.0929,
+      "spread": 703.5209,
+      "spearman_ic": -0.0108
+    },
+    "2M": {
+      "q1_ann_return": 2.2482,
+      "q5_ann_return": 2.1518,
+      "spread": 0.0964,
+      "spearman_ic": -0.0067
+    },
+    "3M": {
+      "q1_ann_return": 1.6667,
+      "q5_ann_return": 0.5764,
+      "spread": 1.0903,
+      "spearman_ic": -0.0061
+    },
+    "4M": {
+      "q1_ann_return": 0.5587,
+      "q5_ann_return": 0.413,
+      "spread": 0.1457,
+      "spearman_ic": -0.0097
+    },
+    "6M": {
+      "q1_ann_return": 0.2958,
+      "q5_ann_return": 0.3496,
+      "spread": -0.0539,
+      "spearman_ic": -0.024
+    },
+    "12M": {
+      "q1_ann_return": 0.2063,
+      "q5_ann_return": 0.2442,
+      "spread": -0.0379,
+      "spearman_ic": -0.0266
+    },
+    "24M": {
+      "q1_ann_return": 0.1692,
+      "q5_ann_return": 0.191,
+      "spread": -0.0218,
+      "spearman_ic": -0.033
+    }
+  },
+  "Bear Market Shield": {
+    "2W": {
+      "q1_ann_return": 5850.4645,
+      "q5_ann_return": 1619.5586,
+      "spread": 4230.906,
+      "spearman_ic": -0.0112
+    },
+    "1M": {
+      "q1_ann_return": 708.5942,
+      "q5_ann_return": 5.0889,
+      "spread": 703.5053,
+      "spearman_ic": -0.0105
+    },
+    "2M": {
+      "q1_ann_return": 2.2399,
+      "q5_ann_return": 2.1582,
+      "spread": 0.0817,
+      "spearman_ic": -0.0064
+    },
+    "3M": {
+      "q1_ann_return": 1.6622,
+      "q5_ann_return": 0.5867,
+      "spread": 1.0755,
+      "spearman_ic": -0.0058
+    },
+    "4M": {
+      "q1_ann_return": 0.5518,
+      "q5_ann_return": 0.4481,
+      "spread": 0.1036,
+      "spearman_ic": -0.0095
+    },
+    "6M": {
+      "q1_ann_return": 0.292,
+      "q5_ann_return": 0.348,
+      "spread": -0.056,
+      "spearman_ic": -0.0238
+    },
+    "12M": {
+      "q1_ann_return": 0.205,
+      "q5_ann_return": 0.2434,
+      "spread": -0.0384,
+      "spearman_ic": -0.0273
+    },
+    "24M": {
+      "q1_ann_return": 0.1693,
+      "q5_ann_return": 0.1891,
+      "spread": -0.0198,
+      "spearman_ic": -0.0331
+    }
+  },
+  "All-Weather Core": {
+    "2W": {
+      "q1_ann_return": 3.1047,
+      "q5_ann_return": 7478.8386,
+      "spread": -7475.7339,
+      "spearman_ic": -0.0455
+    },
+    "1M": {
+      "q1_ann_return": 0.9014,
+      "q5_ann_return": 713.2905,
+      "spread": -712.3891,
+      "spearman_ic": -0.0246
+    },
+    "2M": {
+      "q1_ann_return": 0.4256,
+      "q5_ann_return": 4.1753,
+      "spread": -3.7498,
+      "spearman_ic": -0.043
+    },
+    "3M": {
+      "q1_ann_return": 0.3095,
+      "q5_ann_return": 2.1083,
+      "spread": -1.7988,
+      "spearman_ic": -0.0547
+    },
+    "4M": {
+      "q1_ann_return": 0.2558,
+      "q5_ann_return": 0.9285,
+      "spread": -0.6727,
+      "spearman_ic": -0.0567
+    },
+    "6M": {
+      "q1_ann_return": 0.2099,
+      "q5_ann_return": 0.5245,
+      "spread": -0.3146,
+      "spearman_ic": -0.0638
+    },
+    "12M": {
+      "q1_ann_return": 0.1638,
+      "q5_ann_return": 0.3354,
+      "spread": -0.1715,
+      "spearman_ic": -0.0599
+    },
+    "24M": {
+      "q1_ann_return": 0.1631,
+      "q5_ann_return": 0.227,
+      "spread": -0.0638,
+      "spearman_ic": -0.0008
+    }
+  }
+}

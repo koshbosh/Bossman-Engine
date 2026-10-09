@@ -1,0 +1,19 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Large backtest raw datasets (not needed for live server)
+factor_raw_data.csv
+score_backtest_raw_data.csv
+
+# Environments & OS
+.env
+.venv
+venv/
+ENV/
+.DS_Store
+
+# IDE files
+.vscode/
+.idea/

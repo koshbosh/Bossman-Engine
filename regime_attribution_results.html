@@ -1,0 +1,418 @@
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Regime-Based Factor Attribution</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            h1, h2, h3 { color: #58a6ff; }
+            .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            th, td { border: 1px solid #30363d; padding: 12px; text-align: left; }
+            th { background-color: #21262d; font-weight: 600; }
+            .positive { color: #3fb950; }
+            .negative { color: #f85149; }
+            .signal { color: #a371f7; font-weight: bold; }
+            .noise { color: #8b949e; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Regime-Based Factor Attribution</h1>
+            <p>Evaluating factors across specific market environments to align with profile objectives.</p>
+    
+            <div class="card">
+                <h2>Bull Market (Alpha Bull)</h2>
+                <p><strong>N = 41,776 observations</strong></p>
+                <table>
+                    <tr>
+                        <th>Factor</th>
+                        <th>Multivariate t-stat</th>
+                        <th>Multivariate p-val</th>
+                        <th>Single-Factor Corr</th>
+                        <th>Q1 (Highest) Return</th>
+                        <th>Q5 (Lowest) Return</th>
+                        <th>Independent Signal?</th>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>annualized_vol</strong></td>
+                        <td class="positive">17.59</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="positive">0.0443</td>
+                        <td class="positive">33.66%</td>
+                        <td class="positive">12.33%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_1mo</strong></td>
+                        <td class="positive">9.30</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="negative">-0.0238</td>
+                        <td class="positive">17.58%</td>
+                        <td class="positive">22.28%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>ma50_proximity</strong></td>
+                        <td class="negative">-8.47</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="negative">-0.0439</td>
+                        <td class="positive">12.65%</td>
+                        <td class="positive">26.20%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>rsi</strong></td>
+                        <td class="negative">-6.94</td>
+                        <td class="positive">3.9582e-12</td>
+                        <td class="negative">-0.0559</td>
+                        <td class="positive">10.06%</td>
+                        <td class="positive">26.26%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>ma200_proximity</strong></td>
+                        <td class="positive">4.72</td>
+                        <td class="positive">2.3835e-06</td>
+                        <td class="negative">-0.0285</td>
+                        <td class="positive">15.88%</td>
+                        <td class="positive">21.56%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_6mo</strong></td>
+                        <td class="negative">-4.02</td>
+                        <td class="positive">5.8488e-05</td>
+                        <td class="negative">-0.0303</td>
+                        <td class="positive">15.54%</td>
+                        <td class="positive">21.04%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_1y</strong></td>
+                        <td class="positive">2.78</td>
+                        <td class="positive">5.4172e-03</td>
+                        <td class="negative">-0.0152</td>
+                        <td class="positive">17.11%</td>
+                        <td class="positive">20.81%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_3mo</strong></td>
+                        <td class="negative">-1.58</td>
+                        <td class="">1.1333e-01</td>
+                        <td class="negative">-0.0322</td>
+                        <td class="positive">17.02%</td>
+                        <td class="positive">25.05%</td>
+                        <td><span class='noise'>NO</span></td>
+                    </tr>
+            
+                </table>
+            </div>
+        
+            <div class="card">
+                <h2>Bear Market (Bear Shield / Fundamental Bag)</h2>
+                <p><strong>N = 10,501 observations</strong></p>
+                <table>
+                    <tr>
+                        <th>Factor</th>
+                        <th>Multivariate t-stat</th>
+                        <th>Multivariate p-val</th>
+                        <th>Single-Factor Corr</th>
+                        <th>Q1 (Highest) Return</th>
+                        <th>Q5 (Lowest) Return</th>
+                        <th>Independent Signal?</th>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>momentum_6mo</strong></td>
+                        <td class="negative">-15.39</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="negative">-0.1369</td>
+                        <td class="negative">-14.02%</td>
+                        <td class="positive">38.49%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>ma200_proximity</strong></td>
+                        <td class="positive">12.24</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="negative">-0.1110</td>
+                        <td class="negative">-8.20%</td>
+                        <td class="positive">34.15%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>annualized_vol</strong></td>
+                        <td class="positive">10.37</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="positive">0.0754</td>
+                        <td class="positive">27.19%</td>
+                        <td class="negative">-4.71%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>rsi</strong></td>
+                        <td class="positive">9.92</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="negative">-0.0891</td>
+                        <td class="negative">-17.79%</td>
+                        <td class="negative">-9.66%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>ma50_proximity</strong></td>
+                        <td class="negative">-7.35</td>
+                        <td class="positive">2.0162e-13</td>
+                        <td class="negative">-0.1636</td>
+                        <td class="negative">-18.83%</td>
+                        <td class="positive">26.15%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_1mo</strong></td>
+                        <td class="negative">-5.38</td>
+                        <td class="positive">7.4750e-08</td>
+                        <td class="negative">-0.1537</td>
+                        <td class="negative">-17.56%</td>
+                        <td class="positive">25.63%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_1y</strong></td>
+                        <td class="negative">-2.26</td>
+                        <td class="positive">2.3635e-02</td>
+                        <td class="negative">-0.0861</td>
+                        <td class="negative">-7.01%</td>
+                        <td class="positive">25.41%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_3mo</strong></td>
+                        <td class="negative">-1.60</td>
+                        <td class="">1.1068e-01</td>
+                        <td class="negative">-0.1111</td>
+                        <td class="negative">-8.40%</td>
+                        <td class="positive">30.14%</td>
+                        <td><span class='noise'>NO</span></td>
+                    </tr>
+            
+                </table>
+            </div>
+        
+            <div class="card">
+                <h2>Sideways / Choppy (Dip Hunter)</h2>
+                <p><strong>N = 3,500 observations</strong></p>
+                <table>
+                    <tr>
+                        <th>Factor</th>
+                        <th>Multivariate t-stat</th>
+                        <th>Multivariate p-val</th>
+                        <th>Single-Factor Corr</th>
+                        <th>Q1 (Highest) Return</th>
+                        <th>Q5 (Lowest) Return</th>
+                        <th>Independent Signal?</th>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>momentum_3mo</strong></td>
+                        <td class="positive">7.94</td>
+                        <td class="positive">2.2204e-15</td>
+                        <td class="negative">-0.0525</td>
+                        <td class="positive">16.65%</td>
+                        <td class="positive">25.72%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_1y</strong></td>
+                        <td class="negative">-6.70</td>
+                        <td class="positive">2.1509e-11</td>
+                        <td class="negative">-0.1869</td>
+                        <td class="negative">-9.22%</td>
+                        <td class="positive">46.28%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>ma50_proximity</strong></td>
+                        <td class="negative">-6.35</td>
+                        <td class="positive">2.1717e-10</td>
+                        <td class="negative">-0.2087</td>
+                        <td class="negative">-16.46%</td>
+                        <td class="positive">41.98%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_6mo</strong></td>
+                        <td class="positive">5.85</td>
+                        <td class="positive">5.0497e-09</td>
+                        <td class="negative">-0.0352</td>
+                        <td class="positive">17.12%</td>
+                        <td class="positive">24.10%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>ma200_proximity</strong></td>
+                        <td class="negative">-4.29</td>
+                        <td class="positive">1.7998e-05</td>
+                        <td class="negative">-0.1396</td>
+                        <td class="positive">2.23%</td>
+                        <td class="positive">44.87%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>rsi</strong></td>
+                        <td class="negative">-0.78</td>
+                        <td class="">4.3635e-01</td>
+                        <td class="negative">-0.2004</td>
+                        <td class="negative">-4.51%</td>
+                        <td class="positive">43.92%</td>
+                        <td><span class='noise'>NO</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>annualized_vol</strong></td>
+                        <td class="positive">0.16</td>
+                        <td class="">8.7068e-01</td>
+                        <td class="positive">0.0796</td>
+                        <td class="positive">34.05%</td>
+                        <td class="negative">-0.95%</td>
+                        <td><span class='noise'>NO</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_1mo</strong></td>
+                        <td class="positive">0.12</td>
+                        <td class="">9.0170e-01</td>
+                        <td class="negative">-0.2020</td>
+                        <td class="negative">-6.89%</td>
+                        <td class="positive">56.76%</td>
+                        <td><span class='noise'>NO</span></td>
+                    </tr>
+            
+                </table>
+            </div>
+        
+            <div class="card">
+                <h2>Full Cycle (All-Weather Core)</h2>
+                <p><strong>N = 55,777 observations</strong></p>
+                <table>
+                    <tr>
+                        <th>Factor</th>
+                        <th>Multivariate t-stat</th>
+                        <th>Multivariate p-val</th>
+                        <th>Single-Factor Corr</th>
+                        <th>Q1 (Highest) Return</th>
+                        <th>Q5 (Lowest) Return</th>
+                        <th>Independent Signal?</th>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>annualized_vol</strong></td>
+                        <td class="positive">25.40</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="positive">0.0581</td>
+                        <td class="positive">33.06%</td>
+                        <td class="positive">7.69%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>ma50_proximity</strong></td>
+                        <td class="negative">-12.91</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="negative">-0.0656</td>
+                        <td class="positive">7.54%</td>
+                        <td class="positive">25.69%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_6mo</strong></td>
+                        <td class="negative">-8.29</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="negative">-0.0391</td>
+                        <td class="positive">12.85%</td>
+                        <td class="positive">22.27%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>ma200_proximity</strong></td>
+                        <td class="positive">8.21</td>
+                        <td class="positive">2.2204e-16</td>
+                        <td class="negative">-0.0357</td>
+                        <td class="positive">12.92%</td>
+                        <td class="positive">21.45%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_1mo</strong></td>
+                        <td class="positive">4.43</td>
+                        <td class="positive">9.3152e-06</td>
+                        <td class="negative">-0.0521</td>
+                        <td class="positive">11.21%</td>
+                        <td class="positive">23.01%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_1y</strong></td>
+                        <td class="positive">2.84</td>
+                        <td class="positive">4.5643e-03</td>
+                        <td class="negative">-0.0301</td>
+                        <td class="positive">13.47%</td>
+                        <td class="positive">22.76%</td>
+                        <td><span class='signal'>YES</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>rsi</strong></td>
+                        <td class="positive">0.65</td>
+                        <td class="">5.1699e-01</td>
+                        <td class="negative">-0.0671</td>
+                        <td class="positive">5.47%</td>
+                        <td class="positive">20.15%</td>
+                        <td><span class='noise'>NO</span></td>
+                    </tr>
+            
+                    <tr>
+                        <td><strong>momentum_3mo</strong></td>
+                        <td class="positive">0.53</td>
+                        <td class="">5.9608e-01</td>
+                        <td class="negative">-0.0350</td>
+                        <td class="positive">14.25%</td>
+                        <td class="positive">22.26%</td>
+                        <td><span class='noise'>NO</span></td>
+                    </tr>
+            
+                </table>
+            </div>
+        
+        </div>
+    </body>
+    </html>
+    

@@ -1,0 +1,128 @@
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Factor-by-Factor Attribution Analysis</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            h1, h2, h3 { color: #58a6ff; }
+            .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            th, td { border: 1px solid #30363d; padding: 12px; text-align: left; }
+            th { background-color: #21262d; font-weight: 600; }
+            .positive { color: #3fb950; }
+            .negative { color: #f85149; }
+            .signal { color: #a371f7; font-weight: bold; }
+            .noise { color: #8b949e; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Factor-by-Factor Attribution Analysis</h1>
+            <p><strong>N = 55,777 observations</strong> | Data excludes survivorship and look-ahead biases.</p>
+            
+            <div class="card">
+                <h2>Factor Leaderboard (Sorted by Signal Strength)</h2>
+                <p>Factors are evaluated independently for their ability to predict 1-month forward returns.</p>
+                <table>
+                    <tr>
+                        <th>Factor</th>
+                        <th>Spearman Corr</th>
+                        <th>OLS p-value</th>
+                        <th>Q1 (Highest) Return</th>
+                        <th>Q5 (Lowest) Return</th>
+                        <th>Spread (Q1 - Q5)</th>
+                        <th>Verdict</th>
+                    </tr>
+    
+                    <tr>
+                        <td><strong>rsi</strong></td>
+                        <td class="negative">-0.0671</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="positive">5.47%</td>
+                        <td class="positive">20.15%</td>
+                        <td class="negative">-14.68%</td>
+                        <td><span class='signal'>SIGNAL</span></td>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>ma50_proximity</strong></td>
+                        <td class="negative">-0.0656</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="positive">7.54%</td>
+                        <td class="positive">25.69%</td>
+                        <td class="negative">-18.15%</td>
+                        <td><span class='signal'>SIGNAL</span></td>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>annualized_vol</strong></td>
+                        <td class="positive">0.0581</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="positive">33.06%</td>
+                        <td class="positive">7.69%</td>
+                        <td class="positive">25.38%</td>
+                        <td><span class='signal'>SIGNAL</span></td>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>momentum_1mo</strong></td>
+                        <td class="negative">-0.0521</td>
+                        <td class="positive">0.0000e+00</td>
+                        <td class="positive">11.21%</td>
+                        <td class="positive">23.01%</td>
+                        <td class="negative">-11.80%</td>
+                        <td><span class='signal'>SIGNAL</span></td>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>momentum_6mo</strong></td>
+                        <td class="negative">-0.0391</td>
+                        <td class="positive">2.3658e-08</td>
+                        <td class="positive">12.85%</td>
+                        <td class="positive">22.27%</td>
+                        <td class="negative">-9.42%</td>
+                        <td><span class='signal'>SIGNAL</span></td>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>ma200_proximity</strong></td>
+                        <td class="negative">-0.0357</td>
+                        <td class="positive">1.5543e-15</td>
+                        <td class="positive">12.92%</td>
+                        <td class="positive">21.45%</td>
+                        <td class="negative">-8.52%</td>
+                        <td><span class='signal'>SIGNAL</span></td>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>momentum_3mo</strong></td>
+                        <td class="negative">-0.0350</td>
+                        <td class="positive">8.8818e-16</td>
+                        <td class="positive">14.25%</td>
+                        <td class="positive">22.26%</td>
+                        <td class="negative">-8.01%</td>
+                        <td><span class='signal'>SIGNAL</span></td>
+                    </tr>
+        
+                    <tr>
+                        <td><strong>momentum_1y</strong></td>
+                        <td class="negative">-0.0301</td>
+                        <td class="">7.5099e-01</td>
+                        <td class="positive">13.47%</td>
+                        <td class="positive">22.76%</td>
+                        <td class="negative">-9.30%</td>
+                        <td><span class='noise'>NOISE</span></td>
+                    </tr>
+        
+                </table>
+                <p><em>* Q1 represents stocks with the highest values for the factor (e.g. highest RSI, highest momentum). Q5 represents the lowest.</em></p>
+                <p><em>* A Signal verdict implies the OLS p-value is statistically significant (< 0.05).</em></p>
+            </div>
+        </div>
+    </body>
+    </html>
+    
