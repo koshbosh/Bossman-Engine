@@ -1785,6 +1785,323 @@ body {
   gap: 14px;
 }
 
+/* Responsive layout fixes */
+.header-container > *,
+.kpi-grid > *,
+.profile-tabs > *,
+.analytics-split-grid > *,
+.metrics-grid > *,
+.compare-cards-grid > * {
+  min-width: 0;
+}
+
+.input-wrapper input,
+.compare-input-bar input {
+  min-width: 0;
+}
+
+.btn-primary,
+.btn-secondary,
+.nav-tab {
+  white-space: nowrap;
+}
+
+.analytics-split-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+}
+
+.factors-table-wrapper,
+.table-responsive {
+  max-width: 100%;
+}
+
+.factors-table {
+  min-width: 560px;
+}
+
+.scanner-table {
+  min-width: 880px;
+}
+
+@media (max-width: 1100px) {
+  .header-container {
+    gap: 12px;
+  }
+
+  .macro-regime-card {
+    flex: 1 1 calc(100% - 300px);
+  }
+
+  .view-nav {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .nav-tab {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .profile-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .app-header {
+    padding: 12px 18px;
+  }
+
+  .header-container {
+    align-items: stretch;
+  }
+
+  .brand-group {
+    flex-basis: 100%;
+  }
+
+  .macro-regime-card {
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px 10px;
+    padding: 12px;
+    border-radius: var(--radius-lg);
+  }
+
+  .pulse-dot {
+    margin-top: 5px;
+  }
+
+  .regime-info {
+    min-width: 0;
+  }
+
+  .regime-top-row {
+    align-items: flex-start;
+  }
+
+  .regime-sub {
+    overflow-wrap: anywhere;
+  }
+
+  .regime-actions {
+    grid-column: 2;
+    flex-wrap: wrap;
+  }
+
+  .view-nav {
+    gap: 2px;
+    padding: 3px;
+  }
+
+  .nav-tab {
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 8px 4px;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.25;
+  }
+
+  .main-layout {
+    margin-top: 18px;
+    padding: 0 18px 40px;
+  }
+
+  .control-bar,
+  .ticker-hero-card,
+  .kpi-card,
+  .footnotes-panel,
+  .factor-attribution-panel,
+  .metrics-panel,
+  .scanner-table-card,
+  .compare-header-card {
+    padding: 18px;
+  }
+
+  .ticker-hero-card {
+    align-items: stretch;
+  }
+
+  .hero-left,
+  .hero-right {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .hero-right {
+    align-items: stretch;
+  }
+
+  .meta-stats-row {
+    flex-wrap: wrap;
+  }
+
+  .range-meter-container {
+    width: 100%;
+  }
+
+  .profile-header-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .profile-desc {
+    line-height: 1.45;
+  }
+
+  .scanner-header-card,
+  .compare-header-card {
+    align-items: stretch;
+  }
+
+  .scanner-controls {
+    flex-wrap: wrap;
+  }
+
+  .scanner-profile-select {
+    flex: 1 1 100%;
+  }
+
+  .scanner-profile-select select {
+    max-width: 100%;
+  }
+
+  .compare-input-bar {
+    flex-wrap: wrap;
+  }
+
+  .compare-input-bar input,
+  .compare-input-bar .btn-primary {
+    width: 100%;
+  }
+
+  .panel-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .footer-content {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .modal-card {
+    padding: 20px;
+  }
+
+  .sector-radar-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 540px) {
+  .app-header {
+    padding: 12px 14px;
+  }
+
+  .brand-title {
+    font-size: 13px;
+  }
+
+  .brand-sub {
+    font-size: 9px;
+    letter-spacing: 0.7px;
+  }
+
+  .regime-label {
+    line-height: 1.4;
+  }
+
+  .regime-rec-pill,
+  .sector-radar-btn {
+    white-space: normal;
+  }
+
+  .main-layout {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .input-wrapper {
+    flex-wrap: wrap;
+    padding: 10px;
+  }
+
+  .input-wrapper input {
+    flex: 1 1 calc(100% - 34px);
+    width: 0;
+  }
+
+  .input-wrapper .btn-primary {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .profile-tabs,
+  .kpi-grid,
+  .metrics-grid,
+  .compare-cards-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .meta-divider {
+    display: none;
+  }
+
+  .ticker-symbol,
+  .live-price {
+    font-size: 28px;
+  }
+
+  .ticker-badge-row {
+    gap: 8px;
+  }
+
+  .analytics-split-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .forecast-value-row,
+  .ci-band-header,
+  .prob-header {
+    flex-wrap: wrap;
+  }
+
+  .range-labels {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .scanner-header-card,
+  .scanner-table-card,
+  .compare-header-card,
+  .factor-attribution-panel,
+  .metrics-panel {
+    padding: 14px;
+  }
+
+  .scanner-controls {
+    align-items: stretch;
+  }
+
+  .scanner-profile-select select,
+  .scanner-controls .btn-secondary {
+    width: 100%;
+  }
+
+  .sector-metric-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .sector-radar-tile {
   background: rgba(15, 23, 42, 0.6);
   border: 1px solid var(--border-color);
