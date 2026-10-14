@@ -929,6 +929,130 @@ body {
   transition: width 0.8s ease;
 }
 
+/* Volatility-based entry zones */
+.entry-zones-panel {
+  margin: 18px 0;
+  padding: 20px;
+}
+
+.entry-zones-header {
+  margin-bottom: 10px;
+}
+
+.entry-zones-header h3 {
+  margin-bottom: 3px;
+  font-size: 16px;
+}
+
+.entry-zones-status,
+.entry-zone-best {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.entry-zones-note,
+.entry-zones-disclaimer {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 8px 0 12px;
+}
+
+.entry-zones-disclaimer {
+  color: var(--text-dim);
+  margin-bottom: 0;
+}
+
+.entry-zones-track {
+  min-height: 74px;
+  padding: 7px 12px 5px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.14), rgba(129, 140, 248, 0.04));
+}
+
+.entry-zones-axis {
+  position: relative;
+  height: 36px;
+  margin: 0 8px;
+}
+
+.entry-zones-axis-line {
+  position: absolute;
+  top: 13px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgba(148, 163, 184, 0.4);
+}
+
+.entry-zones-spot-marker {
+  position: absolute;
+  z-index: 1;
+  top: 4px;
+  left: 0;
+  height: 20px;
+  border-left: 2px dashed var(--amber);
+}
+
+.entry-zone-band {
+  position: absolute;
+  top: 7px;
+  height: 14px;
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.35);
+}
+
+.entry-zone-band.best-score {
+  border-color: var(--emerald);
+  background: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 10px var(--emerald-glow);
+}
+
+.entry-zone-axis-label {
+  position: absolute;
+  top: 23px;
+  color: var(--text-dim);
+  font: 9px var(--font-mono);
+  transform: translateX(-50%);
+}
+
+.entry-zones-track-label {
+  color: var(--text-main);
+  font: 11px var(--font-mono);
+}
+
+.entry-zones-table-wrap {
+  overflow-x: auto;
+}
+
+.entry-zones-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 650px;
+}
+
+.entry-zones-table th,
+.entry-zones-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.entry-zones-table th {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.entry-zones-table td {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
 /* Leverage Flag Card */
 .leverage-body {
   display: flex;

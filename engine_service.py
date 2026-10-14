@@ -27,6 +27,7 @@ import pandas as pd
 import yfinance as yf
 from yahooquery import Ticker as YQTicker
 
+from entry_zones import build_entry_zone_analysis
 from recommender import (
     RISK_LEVELS,
     SECTOR_PE_BENCHMARKS,
@@ -391,7 +392,14 @@ class UniversalScoringEngine:
             "debt_to_equity": float(debt_to_equity) if debt_to_equity is not None else None,
             "current_volume": curr_vol,
             "avg_volume": avg_vol_20d,
+            "_close_history": [float(value) for value in close.to_numpy()],
+            "_high_history": [float(value) for value in hist["High"].to_numpy()],
+            "_low_history": [float(value) for value in hist["Low"].to_numpy()],
         }
+
+    def analyze_entry_zones(self, ticker_data, profile_name="Dip Hunter"):
+        """Return entry-zone research without changing the live ticker score."""
+        return build_entry_zone_analysis(self, ticker_data, profile_name)
 
     def evaluate_leverage_flag(self, de_ratio, sector):
         """

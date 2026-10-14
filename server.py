@@ -82,6 +82,30 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_error_json(f"Failed to score '{ticker}': {str(e)}", status=500)
 
+        # ── API: Advisory Volatility-Based Entry Zones ─────────────────
+        elif path == "/api/entry-zones":
+            ticker = params.get("ticker", [""])[0].strip().upper()
+            profile = params.get("profile", ["Dip Hunter"])[0].strip()
+
+            if not ticker:
+                return self.send_error_json("Missing 'ticker' parameter.")
+
+            try:
+                now = time.time()
+                cached = TICKER_CACHE.get(ticker)
+                if cached and (now - cached["timestamp"]) < CACHE_TTL:
+                    ticker_data = cached["data"]
+                else:
+                    ticker_data = ENGINE.fetch_ticker_data(ticker)
+                    TICKER_CACHE[ticker] = {"data": ticker_data, "timestamp": now}
+
+                return self.send_json(ENGINE.analyze_entry_zones(ticker_data, profile))
+            except Exception as e:
+                return self.send_error_json(
+                    f"Failed to analyze entry zones for '{ticker}': {str(e)}",
+                    status=500,
+                )
+
         # ── API: Multi-Ticker Compare ─────────────────────────────────
         elif path == "/api/compare":
             tickers_raw = params.get("tickers", [""])[0]

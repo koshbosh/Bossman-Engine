@@ -5,6 +5,7 @@
 let currentTicker = 'PLTR';
 let currentProfile = 'Dip Hunter';
 let activeView = 'single';
+let entryZoneRequestId = 0;
 
 const PROFILE_DESCRIPTIONS = {
   'Dip Hunter': 'Turnarounds & deep discounts: rewards 3mo momentum shift, inverted 1y momentum, and deep dip MA200 bonuses.',
@@ -280,6 +281,7 @@ function scoreCurrentTicker() {
 // ── Core Scoring Query ────────────────────────────────────────────────
 async function scoreTicker(ticker) {
   currentTicker = ticker.toUpperCase();
+  entryZoneRequestId += 1;
 
   const loadingEl = document.getElementById('loading-state');
   const resultsEl = document.getElementById('results-display');
@@ -300,11 +302,121 @@ async function scoreTicker(ticker) {
     }
 
     renderScoredResults(data);
+    loadEntryZoneAnalysis(currentTicker, currentProfile);
   } catch (err) {
     alert(`Network error connecting to scoring server: ${err.message}`);
   } finally {
     if (loadingEl) loadingEl.classList.add('hidden');
     if (resultsEl) resultsEl.style.opacity = '1.0';
+  }
+}
+
+async function loadEntryZoneAnalysis(ticker, profile) {
+  const status = document.getElementById('entry-zones-status');
+  const note = document.getElementById('entry-zones-note');
+  const body = document.getElementById('entry-zones-body');
+  const track = document.getElementById('entry-zones-track');
+  if (!status || !note || !body || !track) return;
+
+  const requestId = ++entryZoneRequestId;
+  status.textContent = 'Calculating zones…';
+  body.replaceChildren();
+  const loadingRow = document.createElement('tr');
+  const loadingCell = document.createElement('td');
+  loadingCell.colSpan = 6;
+  loadingCell.textContent = 'Estimating volatility-based zones and rescoring candidates…';
+  loadingRow.appendChild(loadingCell);
+  body.appendChild(loadingRow);
+
+  try {
+    const params = new URLSearchParams({ ticker, profile });
+    const response = await fetch(`/api/entry-zones?${params}`);
+    const analysis = await response.json();
+    if (requestId !== entryZoneRequestId) return;
+    if (!response.ok || analysis.error) {
+      throw new Error(analysis.message || 'Entry-zone analysis failed.');
+    }
+
+    status.textContent = `Best sampled score at −${analysis.near_max_score_zone_sigma}σ`;
+    note.textContent =
+      `0.5σ bands use trailing one-year volatility. ${analysis.calibration.reason} ` +
+      analysis.touch_probability_method;
+    document.getElementById('entry-zones-disclaimer').textContent = analysis.disclaimer;
+
+    const orderedZones = [...analysis.zones].sort((a, b) => b.center_sigma - a.center_sigma);
+    body.replaceChildren();
+    orderedZones.forEach(zone => {
+      const row = document.createElement('tr');
+      const cells = [
+        `−${zone.center_sigma}σ`,
+        `$${zone.lower_price.toFixed(2)}–$${zone.upper_price.toFixed(2)}`,
+        zone.touch_probability === null
+          ? 'Unavailable'
+          : `${(zone.touch_probability * 100).toFixed(1)}% · #${zone.touch_probability_rank}`,
+        `${zone.score.toFixed(1)} · #${zone.score_rank} (${zone.score_change >= 0 ? '+' : ''}${zone.score_change.toFixed(1)})`,
+        zone.expected_return === null
+          ? 'Not calibrated'
+          : `${(zone.expected_return * 100).toFixed(1)}% · #${zone.expected_return_rank}`,
+        zone.combined_rank_value === null
+          ? 'Not calibrated'
+          : `${(zone.combined_rank_value * 100).toFixed(2)}% · #${zone.combined_rank}`
+      ];
+      cells.forEach((value, index) => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        if (index === 0 && zone.center_sigma === analysis.near_max_score_zone_sigma) {
+          cell.classList.add('entry-zone-best');
+        }
+        row.appendChild(cell);
+      });
+      body.appendChild(row);
+    });
+
+    const axis = document.getElementById('entry-zones-axis');
+    axis.replaceChildren();
+    const axisLine = document.createElement('div');
+    axisLine.className = 'entry-zones-axis-line';
+    axis.appendChild(axisLine);
+    const spotMarker = document.createElement('div');
+    spotMarker.className = 'entry-zones-spot-marker';
+    spotMarker.title = `Current price: $${analysis.spot_price.toFixed(2)}`;
+    axis.appendChild(spotMarker);
+    analysis.zones.forEach(zone => {
+      const band = document.createElement('div');
+      band.className = 'entry-zone-band';
+      if (zone.center_sigma === analysis.near_max_score_zone_sigma) {
+        band.classList.add('best-score');
+      }
+      band.style.left = `${((zone.center_sigma - 0.25) / 2.25) * 100}%`;
+      band.style.width = `${(0.5 / 2.25) * 100}%`;
+      band.title = `−${zone.center_sigma}σ: $${zone.lower_price.toFixed(2)}–$${zone.upper_price.toFixed(2)}`;
+      axis.appendChild(band);
+
+      const label = document.createElement('span');
+      label.className = 'entry-zone-axis-label';
+      label.textContent = `−${zone.center_sigma}σ`;
+      label.style.left = `${(zone.center_sigma / 2.25) * 100}%`;
+      axis.appendChild(label);
+    });
+    const trackLabel = document.getElementById('entry-zones-track-label');
+    trackLabel.textContent =
+      `Spot $${analysis.spot_price.toFixed(2)}  ·  ` +
+      `Lowest band begins $${Math.min(...analysis.zones.map(zone => zone.lower_price)).toFixed(2)}`;
+    track.dataset.bestZone = String(analysis.near_max_score_zone_sigma);
+    if (analysis.touch_probability_note) {
+      note.textContent += ` Touch probability unavailable: ${analysis.touch_probability_note}`;
+    }
+  } catch (err) {
+    if (requestId !== entryZoneRequestId) return;
+    status.textContent = 'Unavailable';
+    note.textContent = err.message;
+    body.replaceChildren();
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    cell.textContent = 'Entry-zone analysis could not be completed.';
+    row.appendChild(cell);
+    body.appendChild(row);
   }
 }
 

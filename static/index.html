@@ -319,6 +319,43 @@
 
         </div>
 
+        <section class="entry-zones-panel glass-panel" aria-labelledby="entry-zones-title">
+          <div class="panel-header entry-zones-header">
+            <div>
+              <h3 id="entry-zones-title">Volatility-Based Entry Zones</h3>
+              <span class="sub-text">21-trading-day touch estimates · profile score recalculated at each zone</span>
+            </div>
+            <span class="entry-zones-status" id="entry-zones-status">Waiting for ticker score</span>
+          </div>
+          <p class="entry-zones-note" id="entry-zones-note">
+            Zones are relative to this stock’s trailing volatility. Expected return and combined ranking require historical walk-forward calibration.
+          </p>
+          <div class="entry-zones-track" id="entry-zones-track" aria-label="Price zones relative to current price">
+            <div class="entry-zones-axis" id="entry-zones-axis"></div>
+            <div class="entry-zones-track-label" id="entry-zones-track-label"></div>
+          </div>
+          <div class="entry-zones-table-wrap">
+            <table class="entry-zones-table">
+              <thead>
+                <tr>
+                  <th>Zone</th>
+                  <th>Price band</th>
+                  <th>Touch probability · rank</th>
+                  <th>Model score · rank</th>
+                  <th>E(x) · rank</th>
+                  <th>Combined · rank</th>
+                </tr>
+              </thead>
+              <tbody id="entry-zones-body">
+                <tr><td colspan="6">Score a ticker to calculate advisory zones.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="entry-zones-disclaimer" id="entry-zones-disclaimer">
+            Advisory analysis only—not fair value, a guaranteed fill, or a recommendation.
+          </p>
+        </section>
+
         <!-- Footnotes & Dynamic Factor Rebasing Callout Panel -->
         <div class="footnotes-panel glass-panel" id="footnotes-panel">
           <div class="footnotes-header">
