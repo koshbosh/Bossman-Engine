@@ -6,6 +6,12 @@ let currentTicker = 'PLTR';
 let currentProfile = 'Dip Hunter';
 let activeView = 'single';
 let entryZoneRequestId = 0;
+let industryExplorerRequestId = 0;
+let industryExplorerCompanies = [];
+let universeScanRequestId = 0;
+let universeScanPollTimer = null;
+let selectedGicsSector = '';
+let selectedGicsSubindustry = '';
 
 const PROFILE_DESCRIPTIONS = {
   'Dip Hunter': 'Turnarounds & deep discounts: rewards 3mo momentum shift, inverted 1y momentum, and deep dip MA200 bonuses.',
@@ -44,6 +50,11 @@ function setupEventListeners() {
       }
     });
   }
+
+  const explorerSearch = document.getElementById('industry-explorer-search');
+  if (explorerSearch) {
+    explorerSearch.addEventListener('input', renderIndustryExplorerCompanies);
+  }
 }
 
 // ── View Switching ────────────────────────────────────────────────────
@@ -63,7 +74,227 @@ function switchMainView(viewName) {
     runUniverseScan();
   } else if (viewName === 'compare') {
     runCompare();
+  } else if (viewName === 'explorer') {
+    loadIndustryExplorer();
   }
+}
+
+// ── Company Industry Explorer ────────────────────────────────────────
+async function loadIndustryExplorer(refreshSources = false) {
+  const requestId = ++industryExplorerRequestId;
+  const profileSelect = document.getElementById('industry-explorer-profile');
+  const body = document.getElementById('industry-explorer-table-body');
+  const status = document.getElementById('industry-explorer-status');
+  const profile = profileSelect ? profileSelect.value : currentProfile;
+  if (!body || !status) return;
+
+  status.textContent = refreshSources
+    ? 'Refreshing GICS sector source…'
+    : 'Loading GICS sectors…';
+  body.innerHTML = '<tr><td colspan="5" class="explorer-empty">Loading GICS sector companies…</td></tr>';
+
+  try {
+    const params = new URLSearchParams({ profile });
+    if (selectedGicsSector) params.set('sector', selectedGicsSector);
+    if (selectedGicsSubindustry) params.set('subindustry', selectedGicsSubindustry);
+    if (refreshSources) params.set('refresh', 'true');
+    const response = await fetch(`/api/industry-explorer?${params}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Unable to load the GICS sector source.');
+    if (requestId !== industryExplorerRequestId) return;
+
+    selectedGicsSector = data.selected_sector || '';
+    selectedGicsSubindustry = data.selected_subindustry || '';
+    industryExplorerCompanies = data.companies || [];
+    document.getElementById('industry-explorer-count').textContent =
+      `${data.sectors.length} sectors · ${Number(data.unique_company_count || 0).toLocaleString()} companies`;
+    document.getElementById('industry-explorer-group-count').textContent =
+      `${Number(data.subindustries.length).toLocaleString()} sub-industries · ${Number(data.selected_sector_company_count || 0).toLocaleString()} companies`;
+    document.getElementById('industry-explorer-score-coverage').textContent =
+      selectedGicsSubindustry
+        ? `${data.score_company_count || 0} / ${industryExplorerCompanies.length} scores available`
+        : 'Choose a sub-industry to see scores';
+
+    const groupTitle = document.getElementById('industry-explorer-group-title');
+    const groupSubtitle = document.getElementById('industry-explorer-group-subtitle');
+    groupTitle.textContent = selectedGicsSubindustry || 'Companies';
+    groupSubtitle.textContent = selectedGicsSubindustry
+      ? `${selectedGicsSector} · GICS sub-industry`
+      : `${selectedGicsSector || 'Select a sector'} · Select a sub-industry above to see its companies.`;
+
+    renderGicsSectors(data.sectors || []);
+    renderGicsSubindustries(data.subindustries || []);
+    renderIndustryExplorerSources(data);
+    renderIndustryExplorerCompanies();
+  } catch (err) {
+    if (requestId !== industryExplorerRequestId) return;
+    status.textContent = 'Industry data unavailable';
+    document.getElementById('industry-explorer-sectors').replaceChildren();
+    document.getElementById('industry-explorer-subindustries').replaceChildren();
+    document.getElementById('industry-explorer-count').textContent = 'Unavailable';
+    document.getElementById('industry-explorer-group-count').textContent = 'Unavailable';
+    document.getElementById('industry-explorer-score-coverage').textContent = '';
+    document.getElementById('industry-explorer-group-title').textContent = 'Companies';
+    document.getElementById('industry-explorer-group-subtitle').textContent = err.message;
+    industryExplorerCompanies = [];
+    body.innerHTML = '';
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 5;
+    cell.className = 'explorer-empty explorer-error';
+    cell.textContent = err.message;
+    row.appendChild(cell);
+    body.appendChild(row);
+  }
+}
+
+function renderGicsSectors(sectors) {
+  const container = document.getElementById('industry-explorer-sectors');
+  if (!container) return;
+  container.replaceChildren();
+  sectors.forEach(sector => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `explorer-sector-card${sector.name === selectedGicsSector ? ' selected' : ''}`;
+    button.setAttribute('aria-pressed', String(sector.name === selectedGicsSector));
+    const name = document.createElement('strong');
+    name.textContent = sector.name;
+    const count = document.createElement('span');
+    count.textContent = `${sector.company_count} companies`;
+    button.append(name, count);
+    button.addEventListener('click', () => {
+      if (sector.name === selectedGicsSector) return;
+      selectedGicsSector = sector.name;
+      selectedGicsSubindustry = '';
+      loadIndustryExplorer();
+    });
+    container.appendChild(button);
+  });
+  if (!sectors.length) {
+    container.innerHTML = '<p class="explorer-empty">No GICS sectors are available.</p>';
+  }
+}
+
+function renderGicsSubindustries(subindustries) {
+  const container = document.getElementById('industry-explorer-subindustries');
+  if (!container) return;
+  container.replaceChildren();
+  subindustries.forEach(subindustry => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `explorer-subindustry-card${subindustry.name === selectedGicsSubindustry ? ' selected' : ''}`;
+    button.setAttribute('aria-pressed', String(subindustry.name === selectedGicsSubindustry));
+    const name = document.createElement('strong');
+    name.textContent = subindustry.name;
+    const count = document.createElement('span');
+    count.textContent = `${subindustry.company_count} ${subindustry.company_count === 1 ? 'company' : 'companies'}`;
+    button.append(name, count);
+    button.addEventListener('click', () => {
+      if (subindustry.name === selectedGicsSubindustry) return;
+      selectedGicsSubindustry = subindustry.name;
+      loadIndustryExplorer();
+    });
+    container.appendChild(button);
+  });
+  if (!subindustries.length) {
+    container.innerHTML = '<p class="explorer-empty">Select a GICS sector to browse its sub-industries.</p>';
+  }
+}
+
+function renderIndustryExplorerSources(data) {
+  const status = document.getElementById('industry-explorer-status');
+  const meta = document.getElementById('industry-explorer-meta');
+  const sourcesContainer = document.getElementById('industry-explorer-sources');
+  status.textContent = data.refresh_error
+    ? data.refresh_error
+    : `${(data.sources || []).length} GICS source available`;
+  const retrievedAt = data.fetched_at
+    ? `Retrieved ${new Date(data.fetched_at).toLocaleString()}`
+    : '';
+  meta.textContent = [
+    retrievedAt,
+    data.score_baseline_source ? `Score reference: ${data.score_baseline_source}` : ''
+  ].filter(Boolean).join(' · ');
+
+  sourcesContainer.replaceChildren();
+  (data.sources || []).forEach(source => {
+    const item = document.createElement('div');
+    item.className = `explorer-source-item ${source.status}`;
+    const name = document.createElement(source.url ? 'a' : 'strong');
+    if (source.url) {
+      name.href = source.url;
+      name.target = '_blank';
+      name.rel = 'noopener noreferrer';
+      name.className = 'explorer-source-link';
+    }
+    name.textContent = source.name;
+    const detail = document.createElement('span');
+    detail.textContent = source.status === 'available'
+      ? `${Number(source.count).toLocaleString()} GICS-classified companies`
+      : source.message || 'Unavailable';
+    item.append(name, detail);
+    sourcesContainer.appendChild(item);
+  });
+}
+
+function renderIndustryExplorerCompanies() {
+  const body = document.getElementById('industry-explorer-table-body');
+  if (!body) return;
+  const search = (document.getElementById('industry-explorer-search')?.value || '')
+    .trim()
+    .toLowerCase();
+  const companies = industryExplorerCompanies.filter(company =>
+    !search ||
+    company.ticker.toLowerCase().includes(search) ||
+    company.name.toLowerCase().includes(search)
+  );
+  body.replaceChildren();
+
+  if (!companies.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 5;
+    cell.className = 'explorer-empty';
+    cell.textContent = industryExplorerCompanies.length
+      ? 'No companies match this search.'
+      : selectedGicsSubindustry
+        ? 'No companies are available for this GICS sub-industry.'
+        : 'Select a GICS sub-industry to see its companies.';
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }
+
+  companies.forEach(company => {
+    const row = document.createElement('tr');
+    const rank = document.createElement('td');
+    rank.textContent = company.rank ? `#${company.rank}` : '—';
+
+    const identity = document.createElement('td');
+    const ticker = document.createElement('button');
+    ticker.className = 'explorer-ticker';
+    ticker.textContent = company.ticker;
+    ticker.addEventListener('click', () => inspectScannerTicker(company.ticker));
+    const companyName = document.createElement('span');
+    companyName.className = 'explorer-company-name';
+    companyName.textContent = company.name;
+    identity.append(ticker, companyName);
+
+    const membership = document.createElement('td');
+    membership.textContent = (company.memberships || []).join(', ');
+    const score = document.createElement('td');
+    score.className = company.score === undefined ? 'explorer-score unavailable' : 'explorer-score';
+    score.textContent = company.score === undefined ? 'Not in score baseline' : company.score.toFixed(1);
+
+    const action = document.createElement('td');
+    const inspect = document.createElement('button');
+    inspect.className = 'btn-inspect';
+    inspect.textContent = 'Deep dive';
+    inspect.addEventListener('click', () => inspectScannerTicker(company.ticker));
+    action.appendChild(inspect);
+    row.append(rank, identity, membership, score, action);
+    body.appendChild(row);
+  });
 }
 
 // ── Market Macro Regime ───────────────────────────────────────────────
@@ -319,12 +550,27 @@ async function loadEntryZoneAnalysis(ticker, profile) {
   if (!status || !note || !body || !track) return;
 
   const requestId = ++entryZoneRequestId;
-  status.textContent = 'Calculating zones…';
+  if (profile !== 'Dip Hunter') {
+    status.textContent = 'Dip Hunter only';
+    note.textContent = 'Historical fill estimates are currently implemented for Dip Hunter only.';
+    body.replaceChildren();
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 8;
+    cell.textContent = 'Select Dip Hunter to view historical entry estimates.';
+    row.appendChild(cell);
+    body.appendChild(row);
+    document.getElementById('entry-zones-axis').replaceChildren();
+    document.getElementById('entry-zones-track-label').textContent = '';
+    return;
+  }
+
+  status.textContent = 'Calculating historical fills…';
   body.replaceChildren();
   const loadingRow = document.createElement('tr');
   const loadingCell = document.createElement('td');
-  loadingCell.colSpan = 6;
-  loadingCell.textContent = 'Estimating volatility-based zones and rescoring candidates…';
+  loadingCell.colSpan = 8;
+  loadingCell.textContent = 'Replaying five-session limit orders against historical prices…';
   loadingRow.appendChild(loadingCell);
   body.appendChild(loadingRow);
 
@@ -337,10 +583,11 @@ async function loadEntryZoneAnalysis(ticker, profile) {
       throw new Error(analysis.message || 'Entry-zone analysis failed.');
     }
 
-    status.textContent = `Best sampled score at −${analysis.near_max_score_zone_sigma}σ`;
-    note.textContent =
-      `0.5σ bands use trailing one-year volatility. ${analysis.calibration.reason} ` +
-      analysis.touch_probability_method;
+    const opportunityCount = analysis.zones[0]?.horizons[0]?.opportunity_count ?? 0;
+    status.textContent = analysis.calibration.status === 'exploratory'
+      ? `Exploratory replay · ${opportunityCount} historical setups`
+      : 'Insufficient history for ranked estimates';
+    note.textContent = `E(x) is average return after fill; EV is fill probability × net E(x) using ${analysis.calibration.round_trip_cost_bps} bp round-trip costs. Ranks are separate by horizon. ${analysis.method} ${analysis.calibration.reason} Minimum fills per horizon estimate: ${analysis.calibration.minimum_fills_for_estimate}.`;
     document.getElementById('entry-zones-disclaimer').textContent = analysis.disclaimer;
 
     const orderedZones = [...analysis.zones].sort((a, b) => b.center_sigma - a.center_sigma);
@@ -348,25 +595,28 @@ async function loadEntryZoneAnalysis(ticker, profile) {
     orderedZones.forEach(zone => {
       const row = document.createElement('tr');
       const cells = [
-        `−${zone.center_sigma}σ`,
-        `$${zone.lower_price.toFixed(2)}–$${zone.upper_price.toFixed(2)}`,
-        zone.touch_probability === null
+        zone.center_sigma === 0
+          ? 'Spot'
+          : `${zone.center_sigma < 0 ? '+' : '−'}${Math.abs(zone.center_sigma)}σ`,
+        `${zone.entry_type} · $${zone.lower_price.toFixed(2)}–$${zone.upper_price.toFixed(2)} · $${zone.reference_price.toFixed(2)}`,
+        zone.horizons[0].fill_probability === null
           ? 'Unavailable'
-          : `${(zone.touch_probability * 100).toFixed(1)}% · #${zone.touch_probability_rank}`,
+          : `${(zone.horizons[0].fill_probability * 100).toFixed(1)}% · ${zone.horizons[0].filled_samples}/${zone.horizons[0].opportunity_count}`,
         `${zone.score.toFixed(1)} · #${zone.score_rank} (${zone.score_change >= 0 ? '+' : ''}${zone.score_change.toFixed(1)})`,
-        zone.expected_return === null
-          ? 'Not calibrated'
-          : `${(zone.expected_return * 100).toFixed(1)}% · #${zone.expected_return_rank}`,
-        zone.combined_rank_value === null
-          ? 'Not calibrated'
-          : `${(zone.combined_rank_value * 100).toFixed(2)}% · #${zone.combined_rank}`
+        ...zone.horizons.map(result => {
+          if (result.expected_return === null) {
+            return `Insufficient fills (${result.filled_samples}/${analysis.calibration.minimum_fills_for_estimate})`;
+          }
+          const rank = result.rank === null ? 'rank unavailable' : `#${result.rank}`;
+          const error = result.standard_error === null
+            ? ''
+            : `\nNaive SE ±${result.standard_error.toFixed(1)}% · n=${result.filled_samples}`;
+          return `E ${result.expected_return >= 0 ? '+' : ''}${result.expected_return.toFixed(1)}% · EV ${result.expected_value >= 0 ? '+' : ''}${result.expected_value.toFixed(1)}% · ${rank}${error}`;
+        })
       ];
-      cells.forEach((value, index) => {
+      cells.forEach(value => {
         const cell = document.createElement('td');
         cell.textContent = value;
-        if (index === 0 && zone.center_sigma === analysis.near_max_score_zone_sigma) {
-          cell.classList.add('entry-zone-best');
-        }
         row.appendChild(cell);
       });
       body.appendChild(row);
@@ -379,33 +629,30 @@ async function loadEntryZoneAnalysis(ticker, profile) {
     axis.appendChild(axisLine);
     const spotMarker = document.createElement('div');
     spotMarker.className = 'entry-zones-spot-marker';
+    spotMarker.style.left = '50%';
     spotMarker.title = `Current price: $${analysis.spot_price.toFixed(2)}`;
     axis.appendChild(spotMarker);
     analysis.zones.forEach(zone => {
       const band = document.createElement('div');
       band.className = 'entry-zone-band';
-      if (zone.center_sigma === analysis.near_max_score_zone_sigma) {
-        band.classList.add('best-score');
-      }
-      band.style.left = `${((zone.center_sigma - 0.25) / 2.25) * 100}%`;
-      band.style.width = `${(0.5 / 2.25) * 100}%`;
-      band.title = `−${zone.center_sigma}σ: $${zone.lower_price.toFixed(2)}–$${zone.upper_price.toFixed(2)}`;
+      band.style.left = `${((2 - zone.center_sigma) / 4.5) * 100}%`;
+      band.style.width = `${(0.5 / 4.5) * 100}%`;
+      band.title = `${zone.entry_type} ${zone.center_sigma === 0 ? 'at spot' : `${zone.center_sigma < 0 ? '+' : '−'}${Math.abs(zone.center_sigma)}σ`}: $${zone.reference_price.toFixed(2)}`;
       axis.appendChild(band);
 
       const label = document.createElement('span');
       label.className = 'entry-zone-axis-label';
-      label.textContent = `−${zone.center_sigma}σ`;
-      label.style.left = `${(zone.center_sigma / 2.25) * 100}%`;
+      label.textContent = zone.center_sigma === 0
+        ? 'Spot'
+        : `${zone.center_sigma < 0 ? '+' : '−'}${Math.abs(zone.center_sigma)}σ`;
+      label.style.left = `${((2.25 - zone.center_sigma) / 4.5) * 100}%`;
       axis.appendChild(label);
     });
     const trackLabel = document.getElementById('entry-zones-track-label');
     trackLabel.textContent =
       `Spot $${analysis.spot_price.toFixed(2)}  ·  ` +
-      `Lowest band begins $${Math.min(...analysis.zones.map(zone => zone.lower_price)).toFixed(2)}`;
-    track.dataset.bestZone = String(analysis.near_max_score_zone_sigma);
-    if (analysis.touch_probability_note) {
-      note.textContent += ` Touch probability unavailable: ${analysis.touch_probability_note}`;
-    }
+      `Candidate range $${Math.min(...analysis.zones.map(zone => zone.lower_price)).toFixed(2)}–$${Math.max(...analysis.zones.map(zone => zone.upper_price)).toFixed(2)}`;
+    delete track.dataset.bestZone;
   } catch (err) {
     if (requestId !== entryZoneRequestId) return;
     status.textContent = 'Unavailable';
@@ -413,7 +660,7 @@ async function loadEntryZoneAnalysis(ticker, profile) {
     body.replaceChildren();
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = 6;
+    cell.colSpan = 8;
     cell.textContent = 'Entry-zone analysis could not be completed.';
     row.appendChild(cell);
     body.appendChild(row);
@@ -674,45 +921,175 @@ function renderScoredResults(data) {
 }
 
 // ── Universe Scanner View ─────────────────────────────────────────────
-async function runUniverseScan() {
+async function runUniverseScan(refresh = false, existingRequestId = null) {
+  if (universeScanPollTimer) {
+    clearTimeout(universeScanPollTimer);
+    universeScanPollTimer = null;
+  }
+  const requestId = existingRequestId === null
+    ? ++universeScanRequestId
+    : existingRequestId;
   const select = document.getElementById('scan-profile-select');
   const prof = select ? select.value : currentProfile;
   const tbody = document.getElementById('scan-table-body');
+  const refreshButton = document.getElementById('scan-refresh-btn');
+  const statusMessage = document.getElementById('scan-status-message');
+  const statusTime = document.getElementById('scan-status-time');
+  const statusMeta = document.getElementById('scan-status-meta');
+  const progress = document.getElementById('scan-progress-fill');
   if (!tbody) return;
+  const showTableMessage = (message, color) => {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 10;
+    cell.style.textAlign = 'center';
+    cell.style.padding = '20px';
+    if (color) cell.style.color = color;
+    cell.textContent = message;
+    row.appendChild(cell);
+    tbody.replaceChildren(row);
+  };
 
-  tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 30px; color: var(--text-muted);">Scanning pre-computed universe leaderboard...</td></tr>';
+  if (statusMessage) {
+    statusMessage.textContent = refresh
+      ? 'Starting a fresh scan across the configured market universe…'
+      : 'Checking live scanner status…';
+  }
+  if (refreshButton) {
+    refreshButton.disabled = true;
+    refreshButton.textContent = 'Scanning…';
+  }
+  if (!tbody.querySelector('.scan-loading-row')) {
+    tbody.innerHTML = '<tr class="scan-loading-row"><td colspan="10" style="text-align: center; padding: 30px; color: var(--text-muted);">Loading fresh market rankings…</td></tr>';
+  }
 
   try {
-    const res = await fetch(`/api/scan?profile=${encodeURIComponent(prof)}&limit=15`);
+    const refreshParam = refresh ? '&refresh=true' : '';
+    const res = await fetch(`/api/scan?profile=${encodeURIComponent(prof)}${refreshParam}`);
     const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'The market scan could not be started.');
+    if (requestId !== universeScanRequestId) return;
+
+    if (statusMessage) statusMessage.textContent = data.message || 'Market scan status unavailable.';
+    if (statusTime) {
+      statusTime.textContent = data.last_updated
+        ? `Updated ${new Date(data.last_updated).toLocaleString()}`
+        : '';
+    }
+    if (progress) {
+      const percent = data.status === 'complete'
+        ? 100
+        : data.total_in_universe
+          ? Math.min(100, (data.processed_count / data.total_in_universe) * 100)
+          : data.status === 'running' ? 4 : 0;
+      progress.style.width = `${percent}%`;
+    }
+    if (statusMeta) {
+      const checked = `${Number(data.scoreable_count || 0).toLocaleString()} scoreable`;
+      const failed = `${Number(data.failed_count || 0).toLocaleString()} unavailable`;
+      const universe = `${Number(data.total_in_universe || 0).toLocaleString()} constituents`;
+      const sources = (data.source_counts || [])
+        .map(source => {
+          const note = source.coverage_note ? ` — ${source.coverage_note}` : '';
+          return `${source.name} (${source.status}): ${Number(source.count || 0).toLocaleString()}${note}`;
+        })
+        .join(' · ');
+      statusMeta.textContent = data.status === 'running'
+        ? data.phase === 'loading_universe'
+          ? 'Retrieving and deduplicating the public constituent sources…'
+          : `${Number(data.processed_count || 0).toLocaleString()} / ${universe} checked · ${checked} · ${failed}`
+        : [
+          `${universe} · ${checked} · ${failed}`,
+          sources ? `Sources: ${sources}` : '',
+          data.score_baseline_source || '',
+          data.price_data_as_of
+            ? `Latest daily price bar ${new Date(data.price_data_as_of).toLocaleString()}`
+            : '',
+          '1-year OLS forecast uses neutral defaults where live fundamental data is unavailable.',
+          data.failures && data.failures.length
+            ? `Examples unavailable: ${data.failures.slice(0, 5).map(failure => `${failure.ticker} (${failure.error})`).join('; ')}`
+            : '',
+          data.source_fetched_at ? `Constituents retrieved ${new Date(data.source_fetched_at).toLocaleString()}` : ''
+        ].filter(Boolean).join(' · ');
+    }
+
+    if (data.status === 'running') {
+      showTableMessage(data.message || 'Refreshing market data…', 'var(--text-muted)');
+      universeScanPollTimer = setTimeout(
+        () => runUniverseScan(false, requestId),
+        2000
+      );
+      return;
+    }
+
+    if (refreshButton) {
+      refreshButton.disabled = false;
+      refreshButton.textContent = 'Refresh Scan';
+    }
+    if (data.status === 'error') {
+      throw new Error(data.message || 'The live market scan failed.');
+    }
 
     tbody.innerHTML = '';
     if (data.leaderboard && data.leaderboard.length > 0) {
       data.leaderboard.forEach(item => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td class="scan-rank">#${item.rank}</td>
-          <td class="scan-ticker" onclick="inspectScannerTicker('${item.ticker}')">${item.ticker}</td>
-          <td>${item.sector}</td>
-          <td>$${item.price.toFixed(2)}</td>
-          <td>${item.momentum_1y >= 0 ? '+' : ''}${item.momentum_1y.toFixed(1)}%</td>
-          <td>${item.rsi.toFixed(1)}</td>
-          <td>${typeof item.pe_ratio === 'number' ? item.pe_ratio.toFixed(1) + 'x' : item.pe_ratio}</td>
-          <td class="scan-score">${item.score.toFixed(1)}</td>
-          <td style="color: ${item.expected_return >= 0 ? '#38bdf8' : '#f43f5e'}; font-family: var(--font-mono); font-weight: 700;">
-            ${item.expected_return !== null ? (item.expected_return >= 0 ? '+' : '') + item.expected_return.toFixed(1) + '%' : 'N/A'}
-          </td>
-          <td>
-            <button class="btn-inspect" onclick="inspectScannerTicker('${item.ticker}')">Inspect</button>
-          </td>
-        `;
+        const values = [
+          `#${item.rank}`,
+          item.ticker,
+          item.sector || 'N/A',
+          Number.isFinite(item.price) ? `$${item.price.toFixed(2)}` : 'N/A',
+          item.momentum_1y === null || item.momentum_1y === undefined
+            ? 'N/A'
+            : `${item.momentum_1y >= 0 ? '+' : ''}${item.momentum_1y.toFixed(1)}%`,
+          item.rsi === null || item.rsi === undefined ? 'N/A' : item.rsi.toFixed(1),
+          typeof item.pe_ratio === 'number' ? `${item.pe_ratio.toFixed(1)}x` : 'N/A',
+          item.score.toFixed(1),
+          item.expected_return === null || item.expected_return === undefined
+            ? 'N/A'
+            : `${item.expected_return >= 0 ? '+' : ''}${item.expected_return.toFixed(1)}%`
+        ];
+        values.forEach((value, index) => {
+          const cell = document.createElement('td');
+          cell.textContent = value;
+          if (index === 0) cell.className = 'scan-rank';
+          if (index === 1) {
+            const inspectTicker = document.createElement('button');
+            inspectTicker.type = 'button';
+            inspectTicker.className = 'scan-ticker';
+            inspectTicker.textContent = item.ticker;
+            inspectTicker.addEventListener('click', () => inspectScannerTicker(item.ticker));
+            cell.replaceChildren(inspectTicker);
+          }
+          if (index === 7) cell.className = 'scan-score';
+          if (index === 8) {
+            cell.style.color = item.expected_return >= 0 ? '#38bdf8' : '#f43f5e';
+            cell.style.fontFamily = 'var(--font-mono)';
+            cell.style.fontWeight = '700';
+          }
+          tr.appendChild(cell);
+        });
+        const action = document.createElement('td');
+        const inspect = document.createElement('button');
+        inspect.className = 'btn-inspect';
+        inspect.textContent = 'Inspect';
+        inspect.addEventListener('click', () => inspectScannerTicker(item.ticker));
+        action.appendChild(inspect);
+        tr.appendChild(action);
         tbody.appendChild(tr);
       });
     } else {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px;">No scan results available.</td></tr>';
+      showTableMessage('No tickers had enough current market data to rank.');
     }
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 20px; color: var(--rose);">Error loading scanner: ${err.message}</td></tr>`;
+    if (requestId !== universeScanRequestId) return;
+    if (refreshButton) {
+      refreshButton.disabled = false;
+      refreshButton.textContent = 'Refresh Scan';
+    }
+    if (statusMessage) statusMessage.textContent = 'Live market scan failed.';
+    if (progress) progress.style.width = '0%';
+    showTableMessage(`Error loading scanner: ${err.message}`, 'var(--rose)');
   }
 }
 

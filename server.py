@@ -18,6 +18,13 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 
 from engine_service import UniversalScoringEngine
+from market_scanner import AutomatedMarketScanner
+from universe_explorer import (
+    build_gics_sectors,
+    build_gics_subindustries,
+    get_gics_universe,
+    normalize_ticker,
+)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -26,10 +33,12 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 print("[Server] Initializing Universal Scoring Engine...")
 ENGINE = UniversalScoringEngine()
 print("[Server] Engine initialized successfully.")
+MARKET_SCANNER = AutomatedMarketScanner(ENGINE)
 
 # In-memory LRU cache for fetched ticker data (15-minute TTL)
 TICKER_CACHE = {}
 CACHE_TTL = 900  # 15 minutes in seconds
+INDUSTRY_SCORE_CACHE = {}
 
 
 class EngineRequestHandler(BaseHTTPRequestHandler):
@@ -82,13 +91,17 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_error_json(f"Failed to score '{ticker}': {str(e)}", status=500)
 
-        # ── API: Advisory Volatility-Based Entry Zones ─────────────────
+        # ── API: Historical Dip Hunter Entry Analysis ──────────────────
         elif path == "/api/entry-zones":
             ticker = params.get("ticker", [""])[0].strip().upper()
             profile = params.get("profile", ["Dip Hunter"])[0].strip()
 
             if not ticker:
                 return self.send_error_json("Missing 'ticker' parameter.")
+            if profile != "Dip Hunter":
+                return self.send_error_json(
+                    "Historical entry analysis is currently available for Dip Hunter only."
+                )
 
             try:
                 now = time.time()
@@ -135,15 +148,115 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
 
         # ── API: Universe Scan Leaderboard ────────────────────────────
         elif path == "/api/scan":
+            from recommender import RISK_LEVELS
+
             profile = params.get("profile", ["Dip Hunter"])[0].strip()
-            limit = int(params.get("limit", ["15"])[0])
-            leaderboard = ENGINE.scan_universe(profile_name=profile, top_n=limit)
-            return self.send_json({
-                "profile": profile,
-                "leaderboard": leaderboard,
-                "total_in_universe": len(ENGINE.baseline_df),
-                "market_regime": ENGINE.market_regime,
-            })
+            if profile not in RISK_LEVELS:
+                return self.send_error_json(f"Unknown scoring profile: {profile}")
+            refresh = params.get("refresh", ["false"])[0].lower() == "true"
+            try:
+                scan = MARKET_SCANNER.get_scan(profile, force_refresh=refresh)
+            except ValueError as error:
+                return self.send_error_json(str(error))
+            scan["market_regime"] = ENGINE.market_regime
+            return self.send_json(scan)
+
+        # ── API: Free Public-Source Industry Explorer ─────────────────
+        elif path == "/api/industry-explorer":
+            from recommender import RISK_LEVELS
+
+            profile = params.get("profile", ["Dip Hunter"])[0].strip()
+            requested_sector = params.get("sector", [""])[0]
+            requested_subindustry = params.get("subindustry", [""])[0]
+            force_refresh = params.get("refresh", [""])[0].lower() == "true"
+            if profile not in RISK_LEVELS:
+                return self.send_error_json(f"Unknown scoring profile: {profile}")
+
+            try:
+                universe = get_gics_universe(force_refresh=force_refresh)
+                gics_companies = universe["companies"]
+                sectors = build_gics_sectors(gics_companies)
+                selected_sector = next(
+                    (sector["name"] for sector in sectors if sector["name"] == requested_sector),
+                    None,
+                )
+                if requested_sector and selected_sector is None:
+                    return self.send_error_json("The selected GICS sector is no longer available.")
+                if selected_sector is None and sectors:
+                    selected_sector = sectors[0]["name"]
+                subindustries = (
+                    build_gics_subindustries(gics_companies, selected_sector)
+                    if selected_sector else []
+                )
+                selected_subindustry = next(
+                    (
+                        industry["name"] for industry in subindustries
+                        if industry["name"] == requested_subindustry
+                    ),
+                    None,
+                )
+                if requested_subindustry and selected_subindustry is None:
+                    return self.send_error_json(
+                        "The selected GICS sub-industry is not available in this sector."
+                    )
+
+                if profile not in INDUSTRY_SCORE_CACHE:
+                    score_rows = ENGINE.scan_universe(
+                        profile_name=profile,
+                        top_n=len(ENGINE.baseline_df),
+                    )
+                    INDUSTRY_SCORE_CACHE[profile] = {
+                        normalize_ticker(row["ticker"]): {
+                            "score": row["score"],
+                            "rank": row["rank"],
+                        }
+                        for row in score_rows
+                        if normalize_ticker(row.get("ticker"))
+                    }
+                scores = INDUSTRY_SCORE_CACHE[profile]
+                selected_companies = [
+                    {
+                        **company,
+                        **scores.get(company["ticker"], {}),
+                    }
+                    for company in gics_companies
+                    if company["sector"] == selected_sector
+                    and selected_subindustry is not None
+                    and company["industry"] == selected_subindustry
+                ]
+                selected_companies.sort(
+                    key=lambda company: (
+                        company.get("rank") is None,
+                        company.get("rank", float("inf")),
+                        company["name"].casefold(),
+                    )
+                )
+
+                return self.send_json({
+                    "profile": profile,
+                    "sectors": sectors,
+                    "selected_sector": selected_sector,
+                    "subindustries": subindustries,
+                    "selected_subindustry": selected_subindustry,
+                    "companies": selected_companies,
+                    "unique_company_count": len(gics_companies),
+                    "selected_sector_company_count": sum(
+                        company["sector"] == selected_sector for company in gics_companies
+                    ),
+                    "score_baseline_count": len(scores),
+                    "score_company_count": sum(
+                        company["ticker"] in scores for company in selected_companies
+                    ),
+                    "score_baseline_source": os.path.basename(ENGINE.baseline_csv_path),
+                    "sources": universe["sources"],
+                    "fetched_at": universe["fetched_at"],
+                    "refresh_error": universe.get("refresh_error"),
+                })
+            except RuntimeError as error:
+                return self.send_error_json(
+                    f"Could not load the public company universe: {error}",
+                    status=503,
+                )
 
         # ── API: Market Regime & SPY Status ───────────────────────────
         elif path == "/api/market-regime":
