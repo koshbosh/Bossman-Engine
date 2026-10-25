@@ -282,14 +282,14 @@ class UniversalScoringEngine:
 
     def fetch_ticker_data(self, ticker: str):
         """
-        Downloads 2y price history and fundamentals for ANY arbitrary ticker.
+        Downloads 5y price history and fundamentals for ANY arbitrary ticker.
         Handles edge cases (missing data, young IPOs, OTC, foreign ADRs).
         """
         ticker = ticker.strip().upper()
         t = yf.Ticker(ticker)
 
         # 1. Price History
-        hist = t.history(period="2y")
+        hist = t.history(period="5y", auto_adjust=True)
         if hist.empty or len(hist) < 20:
             raise ValueError(f"Insufficient historical data found for ticker '{ticker}'. Please verify the symbol.")
 
@@ -392,6 +392,7 @@ class UniversalScoringEngine:
             "debt_to_equity": float(debt_to_equity) if debt_to_equity is not None else None,
             "current_volume": curr_vol,
             "avg_volume": avg_vol_20d,
+            "_open_history": [float(value) for value in hist["Open"].to_numpy()],
             "_close_history": [float(value) for value in close.to_numpy()],
             "_high_history": [float(value) for value in hist["High"].to_numpy()],
             "_low_history": [float(value) for value in hist["Low"].to_numpy()],

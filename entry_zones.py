@@ -1,4 +1,4 @@
-"""Advisory price zones based on volatility and the production scoring equation."""
+"""Historical limit-order entry analysis for the Dip Hunter profile."""
 
 import math
 
@@ -8,9 +8,12 @@ from recommender import calculate_ma_proximity
 
 
 TRADING_DAYS_PER_YEAR = 252
-TOUCH_HORIZON_DAYS = 21
-ZONE_SIGMA_CENTERS = (0.5, 1.0, 1.5, 2.0)
-MIN_RETURNS_FOR_TOUCH_ESTIMATE = 60
+ORDER_OPEN_DAYS = 5
+FORWARD_HORIZONS = (21, 42, 63, 90)
+VOLATILITY_LOOKBACK_DAYS = 252
+ZONE_SIGMA_CENTERS = (-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0)
+MIN_FILLED_SAMPLES_FOR_RANK = 30
+ROUND_TRIP_COST_BPS = 10
 
 
 def hypothetical_ticker_data(ticker_data, close_history, price):
@@ -49,182 +52,279 @@ def hypothetical_ticker_data(ticker_data, close_history, price):
     return result
 
 
-def _simulate_zone_touch_probabilities(
-    price,
-    annualized_vol,
-    daily_returns,
-    daily_high_to_close,
-    daily_low_to_close,
-    simulations,
-    seed,
+def _historical_limit_order_estimates(
+    closes,
+    opens,
+    highs,
+    lows,
+    zone_centers=ZONE_SIGMA_CENTERS,
+    horizons=FORWARD_HORIZONS,
+    order_open_days=ORDER_OPEN_DAYS,
+    min_filled_samples=MIN_FILLED_SAMPLES_FOR_RANK,
+    round_trip_cost_bps=ROUND_TRIP_COST_BPS,
 ):
-    returns = np.asarray(daily_returns, dtype=float)
-    high_ratios = np.asarray(daily_high_to_close, dtype=float)
-    low_ratios = np.asarray(daily_low_to_close, dtype=float)
-    valid = (
-        np.isfinite(returns)
-        & np.isfinite(high_ratios)
-        & np.isfinite(low_ratios)
-        & (high_ratios >= 1.0)
-        & (low_ratios > 0.0)
-        & (low_ratios <= 1.0)
+    """Replay fixed-sigma entries using only preceding data and subsequent OHLC."""
+    closes = np.asarray(closes, dtype=float)
+    opens = np.asarray(opens, dtype=float)
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    if not (len(closes) == len(opens) == len(highs) == len(lows)):
+        return None, "Aligned adjusted OHLC history is required."
+
+    valid_prices = (
+        np.isfinite(closes)
+        & np.isfinite(opens)
+        & np.isfinite(highs)
+        & np.isfinite(lows)
+        & (closes > 0)
+        & (opens > 0)
+        & (highs > 0)
+        & (lows > 0)
     )
-    returns = returns[valid]
-    high_ratios = high_ratios[valid]
-    low_ratios = low_ratios[valid]
-    if returns.size < MIN_RETURNS_FOR_TOUCH_ESTIMATE:
-        return None, "At least 60 daily returns are needed to estimate touch probabilities."
+    if not valid_prices.all():
+        return None, "Price history contains invalid OHLC observations."
 
-    sigma = annualized_vol * math.sqrt(TOUCH_HORIZON_DAYS / TRADING_DAYS_PER_YEAR)
-    if not math.isfinite(sigma) or sigma <= 0:
-        return None, "Volatility is unavailable or non-positive."
+    max_horizon = max(horizons)
+    first_anchor = VOLATILITY_LOOKBACK_DAYS
+    anchor_stop = len(closes) - order_open_days - max_horizon + 1
+    if anchor_stop <= first_anchor:
+        return None, (
+            f"At least {VOLATILITY_LOOKBACK_DAYS + order_open_days + max_horizon + 1} "
+            "sessions are required for the longest forward horizon."
+        )
 
-    rng = np.random.default_rng(seed)
-    trailing_returns = returns[-252:]
-    trailing_high_ratios = high_ratios[-252:]
-    trailing_low_ratios = low_ratios[-252:]
-    sampled_indexes = rng.integers(
-        0,
-        len(trailing_returns),
-        size=(simulations, TOUCH_HORIZON_DAYS),
-    )
-    sampled_returns = trailing_returns[sampled_indexes] - trailing_returns.mean()
-    paths = price * np.exp(np.cumsum(sampled_returns, axis=1))
-    path_highs = paths * trailing_high_ratios[sampled_indexes]
-    path_lows = paths * trailing_low_ratios[sampled_indexes]
+    opportunity_counts = {center: 0 for center in zone_centers}
+    fills = {center: [] for center in zone_centers}
+    for anchor in range(first_anchor, anchor_stop):
+        prior_closes = closes[anchor - VOLATILITY_LOOKBACK_DAYS : anchor + 1]
+        daily_returns = np.diff(np.log(prior_closes))
+        annualized_volatility = float(np.std(daily_returns, ddof=1) * math.sqrt(TRADING_DAYS_PER_YEAR))
+        if not math.isfinite(annualized_volatility) or annualized_volatility <= 0:
+            continue
 
-    probabilities = {}
-    for center in ZONE_SIGMA_CENTERS:
-        low = price * math.exp(-(center + 0.25) * sigma)
-        high = price * math.exp(-(center - 0.25) * sigma)
-        touched = np.any((path_highs >= low) & (path_lows <= high), axis=1)
-        probabilities[center] = float(touched.mean())
-    return probabilities, None
+        sigma_21d = annualized_volatility * math.sqrt(21 / TRADING_DAYS_PER_YEAR)
+        anchor_price = closes[anchor]
+        for center in zone_centers:
+            opportunity_counts[center] += 1
+            trigger_price = anchor_price * math.exp(-center * sigma_21d)
+            first_fill = None
+            if center == 0:
+                first_fill = (anchor + 1, opens[anchor + 1])
+            elif center > 0:
+                for fill_index in range(anchor + 1, anchor + order_open_days + 1):
+                    if lows[fill_index] <= trigger_price:
+                        fill_price = min(trigger_price, opens[fill_index])
+                        first_fill = (fill_index, fill_price)
+                        break
+            else:
+                for fill_index in range(anchor + 1, anchor + order_open_days + 1):
+                    if opens[fill_index] >= trigger_price:
+                        first_fill = (fill_index, opens[fill_index])
+                        break
+                    if highs[fill_index] >= trigger_price:
+                        first_fill = (fill_index, trigger_price)
+                        break
+            if first_fill is not None:
+                fills[center].append(first_fill)
+
+    cost_fraction = round_trip_cost_bps / 10_000
+    estimates = {}
+    for center in zone_centers:
+        opportunities = opportunity_counts[center]
+        center_fills = fills[center]
+        forward = {}
+        for horizon in horizons:
+            returns = np.asarray(
+                [
+                    closes[fill_index + horizon] / fill_price - 1
+                    for fill_index, fill_price in center_fills
+                ],
+                dtype=float,
+            )
+            sufficient = len(returns) >= min_filled_samples
+            if sufficient:
+                mean_return = float(returns.mean())
+                standard_error = (
+                    float(returns.std(ddof=1) / math.sqrt(len(returns)))
+                    if len(returns) > 1
+                    else None
+                )
+                net_return = mean_return - cost_fraction
+                fill_probability = len(center_fills) / opportunities if opportunities else None
+                expected_value = fill_probability * net_return if fill_probability is not None else None
+            else:
+                mean_return = standard_error = net_return = expected_value = None
+                fill_probability = len(center_fills) / opportunities if opportunities else None
+            forward[horizon] = {
+                "expected_return": round(mean_return * 100, 2) if mean_return is not None else None,
+                "net_expected_return": round(net_return * 100, 2) if net_return is not None else None,
+                "expected_value": round(expected_value * 100, 2) if expected_value is not None else None,
+                "standard_error": round(standard_error * 100, 2) if standard_error is not None else None,
+                "rank": None,
+                "filled_samples": len(returns),
+                "opportunity_count": opportunities,
+                "fill_probability": round(fill_probability, 4) if fill_probability is not None else None,
+                "status": "available" if sufficient else "insufficient_samples",
+            }
+        estimates[center] = forward
+
+    for horizon in horizons:
+        rankable = [
+            (center, estimates[center][horizon]["expected_value"])
+            for center in zone_centers
+            if estimates[center][horizon]["expected_value"] is not None
+        ]
+        if len(rankable) >= 2:
+            for rank, (center, _) in enumerate(
+                sorted(rankable, key=lambda item: (-item[1], item[0])),
+                start=1,
+            ):
+                estimates[center][horizon]["rank"] = rank
+
+    return estimates, None
 
 
-def build_entry_zone_analysis(engine, ticker_data, profile_name, simulations=10000):
-    """Build a separate advisory analysis; never mutates production score inputs."""
+def build_entry_zone_analysis(engine, ticker_data, profile_name):
+    """Build a per-ticker historical fill study; it does not alter the live score."""
+    if profile_name != "Dip Hunter":
+        raise ValueError("Historical entry estimates are currently available for Dip Hunter only.")
+
     close_history = ticker_data.get("_close_history")
-    if not close_history or len(close_history) < 20:
+    open_history = ticker_data.get("_open_history")
+    high_history = ticker_data.get("_high_history")
+    low_history = ticker_data.get("_low_history")
+    if close_history is None or len(close_history) < 20:
         raise ValueError("Price history is unavailable for entry-zone analysis.")
+    if open_history is None or high_history is None or low_history is None:
+        raise ValueError("Aligned adjusted daily OHLC history is required for entry-zone analysis.")
+    if not (len(close_history) == len(open_history) == len(high_history) == len(low_history)):
+        raise ValueError("Aligned adjusted daily OHLC history is unavailable.")
 
     price = float(ticker_data["price"])
     annualized_vol = float(ticker_data["annualized_vol"])
-    sigma_21d = annualized_vol * math.sqrt(TOUCH_HORIZON_DAYS / TRADING_DAYS_PER_YEAR)
+    sigma_21d = annualized_vol * math.sqrt(21 / TRADING_DAYS_PER_YEAR)
     if not math.isfinite(sigma_21d) or sigma_21d <= 0:
         raise ValueError("A positive annualized volatility estimate is required.")
 
+    historical_estimates, estimate_note = _historical_limit_order_estimates(
+        close_history,
+        open_history,
+        high_history,
+        low_history,
+    )
     base_score = engine.score_ticker(ticker_data, profile_name=profile_name)["score"]
-    closes = np.asarray(close_history, dtype=float)
-    high_history = ticker_data.get("_high_history")
-    low_history = ticker_data.get("_low_history")
-    if high_history is None or low_history is None:
-        probabilities, probability_note = (
-            None,
-            "Adjusted daily high/low history is required to identify intraday band touches.",
-        )
-    else:
-        highs = np.asarray(high_history, dtype=float)
-        lows = np.asarray(low_history, dtype=float)
-        if len(highs) != len(closes) or len(lows) != len(closes):
-            probabilities, probability_note = (
-                None,
-                "Aligned adjusted daily OHLC history is unavailable.",
-            )
-        else:
-            daily_returns = np.diff(np.log(closes))
-            daily_high_to_close = highs[1:] / closes[1:]
-            daily_low_to_close = lows[1:] / closes[1:]
-            probabilities, probability_note = _simulate_zone_touch_probabilities(
-                price,
-                annualized_vol,
-                daily_returns,
-                daily_high_to_close,
-                daily_low_to_close,
-                simulations,
-                seed=sum(ord(char) for char in ticker_data["ticker"]),
-            )
-
     zones = []
     for center in ZONE_SIGMA_CENTERS:
-        lower_sigma = center + 0.25
-        upper_sigma = center - 0.25
-        lower_price = price * math.exp(-lower_sigma * sigma_21d)
-        upper_price = price * math.exp(-upper_sigma * sigma_21d)
+        band_edges = (
+            price * math.exp(-(center + 0.25) * sigma_21d),
+            price * math.exp(-(center - 0.25) * sigma_21d),
+        )
+        lower_price, upper_price = sorted(band_edges)
+        reference_price = price * math.exp(-center * sigma_21d)
         hypothetical_data = hypothetical_ticker_data(
             ticker_data,
             close_history,
-            price * math.exp(-center * sigma_21d),
+            reference_price,
         )
         hypothetical_score = engine.score_ticker(
             hypothetical_data,
             profile_name=profile_name,
         )["score"]
+        horizons = (
+            historical_estimates[center]
+            if historical_estimates is not None
+            else {
+                horizon: {
+                    "expected_return": None,
+                    "net_expected_return": None,
+                    "expected_value": None,
+                    "standard_error": None,
+                    "rank": None,
+                    "filled_samples": 0,
+                    "opportunity_count": 0,
+                    "fill_probability": None,
+                    "status": "unavailable",
+                }
+                for horizon in FORWARD_HORIZONS
+            }
+        )
         zones.append({
             "center_sigma": center,
+            "entry_type": (
+                "Buy stop" if center < 0
+                else "Market at next open" if center == 0
+                else "Limit buy"
+            ),
             "lower_price": round(lower_price, 2),
             "upper_price": round(upper_price, 2),
-            "reference_price": round(hypothetical_data["price"], 2),
-            "touch_probability": (
-                probabilities[center] if probabilities is not None else None
-            ),
+            "reference_price": round(reference_price, 2),
             "score": hypothetical_score,
             "score_change": round(hypothetical_score - base_score, 2),
-            "expected_return": None,
-            "combined_rank_value": None,
-            "expected_return_rank": None,
-            "combined_rank": None,
+            "score_rank": None,
+            "horizons": [
+                {"horizon_days": horizon, **horizons[horizon]}
+                for horizon in FORWARD_HORIZONS
+            ],
         })
 
-    touchable_zones = [zone for zone in zones if zone["touch_probability"] is not None]
     for rank, zone in enumerate(
-        sorted(touchable_zones, key=lambda item: item["touch_probability"], reverse=True),
-        start=1,
-    ):
-        zone["touch_probability_rank"] = rank
-    for rank, zone in enumerate(
-        sorted(zones, key=lambda item: item["score"], reverse=True),
+        sorted(zones, key=lambda item: (-item["score"], item["center_sigma"])),
         start=1,
     ):
         zone["score_rank"] = rank
-    for zone in zones:
-        zone.setdefault("touch_probability_rank", None)
 
-    best_zone = max(zones, key=lambda zone: zone["score"])
+    has_estimates = any(
+        result["expected_return"] is not None
+        for zone in zones
+        for result in zone["horizons"]
+    )
+    calibration_reason = estimate_note or (
+        "No zone has enough historical fills for a return estimate. "
+        if not has_estimates
+        else ""
+    )
+    calibration_reason += (
+        "Estimates use this ticker's trailing history only and have not been "
+        "validated in a separate walk-forward test. Daily order windows overlap, "
+        "so the displayed standard errors are naive and are not confidence intervals. "
+        "Horizon ranks are reported separately; no single horizon is selected as optimal."
+    )
     return {
         "ticker": ticker_data["ticker"],
         "profile": profile_name,
         "spot_price": price,
         "current_score": base_score,
-        "horizon_days": TOUCH_HORIZON_DAYS,
+        "order_open_days": ORDER_OPEN_DAYS,
+        "horizons_days": list(FORWARD_HORIZONS),
         "annualized_volatility": annualized_vol,
         "one_month_sigma_pct": round((math.exp(sigma_21d) - 1) * 100, 2),
         "zones": zones,
-        "near_max_score_zone_sigma": best_zone["center_sigma"],
-        "touch_probability_status": (
-            "available" if probabilities is not None else "unavailable"
-        ),
-        "touch_probability_note": probability_note,
-        "touch_probability_method": (
-            "Bootstrap of aligned trailing adjusted daily returns and high/low "
-            "ranges with zero drift; a touch is counted when a simulated daily "
-            "bar intersects the band."
-        ),
         "calibration": {
-            "status": "unavailable",
-            "reason": (
-                "No profile-specific walk-forward score-to-return calibration is "
-                "available. Expected return and combined ranking are intentionally "
-                "not estimated."
+            "status": (
+                "exploratory"
+                if has_estimates
+                else "insufficient_samples" if historical_estimates is not None
+                else "insufficient_history"
             ),
-            "candidate_horizons_days": [21, 63, 126, 252],
-            "horizon_selection_method": (
-                "Walk-forward mean monthly Spearman IC, with top-minus-bottom "
-                "quintile spread as a secondary check."
-            ),
+            "scope": "single_ticker_historical_replay",
+            "minimum_fills_for_estimate": MIN_FILLED_SAMPLES_FOR_RANK,
+            "round_trip_cost_bps": ROUND_TRIP_COST_BPS,
+            "reason": calibration_reason,
         },
+        "method": (
+            "Historical replay of candidate entries set at each sigma-center price. "
+            "Below-spot limit buys fill at the limit or a better opening price after a "
+            "downward gap. Above-spot buy stops fill at the trigger when the daily high "
+            "reaches it, or at the opening price after an upward gap. The at-spot candidate "
+            "is a market-at-next-open order. Limit and stop orders expire after five "
+            "trading sessions. Returns are measured from the fill price to the adjusted "
+            "close 21, 42, 63, or 90 sessions later. E(x) is the arithmetic mean gross "
+            "return after fills; EV is fill probability times net E(x), less an assumed "
+            "10 bp round-trip cost, with unfilled orders counted as zero."
+        ),
         "disclaimer": (
-            "Advisory model-score and volatility zones only; not fair value, "
-            "a guarantee of a fill, or a recommendation."
+            "Exploratory historical estimates, not a validated forecast or recommendation. "
+            "Returns are based on one ticker's history and do not guarantee future fills "
+            "or performance."
         ),
     }

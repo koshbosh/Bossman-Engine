@@ -273,9 +273,12 @@ SECTOR_DE_THRESHOLDS = {
 
 
 def normalize(series):
-    if series.max() == series.min():
-        return series * 0.0
-    return series.rank(pct=True)
+    valid = series.dropna()
+    if valid.empty:
+        return pd.Series(0.5, index=series.index, dtype=float)
+    if valid.max() == valid.min():
+        return pd.Series(0.5, index=series.index, dtype=float)
+    return series.rank(pct=True).fillna(0.5)
 
 
 def calculate_ma_proximity(price, ma):
@@ -293,6 +296,8 @@ def calculate_ma_proximity(price, ma):
 
 def risk_penalty(vol, limit):
     if limit is None or pd.isna(limit):
+        return 1.0
+    if pd.isna(vol):
         return 1.0
     if vol <= limit:
         return 1.0
@@ -492,11 +497,17 @@ def calculate_ma200_bonus(price, ma_200, momentum_1y, max_bonus=0.08, max_depth=
         momentum_1y = float(momentum_1y)
     except (ValueError, TypeError):
         return 1.0
-    if pd.isna(price) or pd.isna(ma_200) or ma_200 <= 0 or price >= ma_200:
+    if (
+        pd.isna(price)
+        or pd.isna(ma_200)
+        or pd.isna(momentum_1y)
+        or ma_200 <= 0
+        or price >= ma_200
+    ):
         return 1.0
         
     # Falling Knife check: revoke bonus if stock is dying
-    if not pd.isna(momentum_1y) and momentum_1y < -0.30:
+    if momentum_1y < -0.30:
         return 1.0
         
     pct_below = (ma_200 - price) / ma_200  # e.g. 0.15 = 15% below
@@ -691,12 +702,18 @@ def generate_recommendations(stocks_df, user_profile="Dip Hunter", top_n=10, pe_
         # without leaking base_3mo_wt or disturbing total factor weight budget.
         if use_conditional:
             shift = 0.05
-            if row.get("momentum_3mo", 0) > row.get("momentum_1mo", 0):
-                w_ma50 = base_ma50_wt - shift
-                w_ma200 = base_ma200_wt + shift
+            momentum_3mo = row.get("momentum_3mo", np.nan)
+            momentum_1mo = row.get("momentum_1mo", np.nan)
+            if pd.notna(momentum_3mo) and pd.notna(momentum_1mo):
+                if momentum_3mo > momentum_1mo:
+                    w_ma50 = base_ma50_wt - shift
+                    w_ma200 = base_ma200_wt + shift
+                else:
+                    w_ma50 = base_ma50_wt + shift
+                    w_ma200 = base_ma200_wt - shift
             else:
-                w_ma50 = base_ma50_wt + shift
-                w_ma200 = base_ma200_wt - shift
+                w_ma50 = base_ma50_wt
+                w_ma200 = base_ma200_wt
             w_3mo = base_3mo_wt
         else:
             w_ma50, w_3mo, w_ma200 = base_ma50_wt, base_3mo_wt, base_ma200_wt
@@ -847,9 +864,16 @@ def generate_recommendations(stocks_df, user_profile="Dip Hunter", top_n=10, pe_
 
     df["recommendation_score"] = scores
     df["profile"] = user_profile
+    sort_columns = ["recommendation_score"]
+    ascending = [False]
+    if "ticker" in df.columns:
+        sort_columns.append("ticker")
+        ascending.append(True)
     df = df.sort_values(
-        "recommendation_score", 
-        ascending=False
+        sort_columns,
+        ascending=ascending,
+        kind="stable",
+        na_position="last",
     )
 
     if top_n is None:
