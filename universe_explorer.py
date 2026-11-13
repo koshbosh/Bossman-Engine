@@ -373,6 +373,18 @@ def build_gics_subindustries(companies, sector):
     ]
 
 
+def search_gics_companies(companies, query):
+    """Search the GICS company universe by ticker or company name."""
+    term = (query or "").strip().casefold()
+    if not term:
+        return []
+    return [
+        company for company in companies
+        if term in str(company.get("ticker", "")).casefold()
+        or term in str(company.get("name", "")).casefold()
+    ]
+
+
 def get_gics_universe(force_refresh=False):
     """Return just the GICS-classified S&P list used by the sector explorer."""
     global _cached_gics_universe, _cached_gics_at

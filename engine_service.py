@@ -78,6 +78,22 @@ SECTOR_TO_ETF = {
 }
 
 
+def apply_gics_classification(ticker_data, sector, industry):
+    """Apply validated GICS Explorer metadata to an individual ticker record."""
+    if not sector:
+        return ticker_data
+    if sector not in SECTOR_TO_ETF:
+        raise ValueError(f"Unknown GICS sector: {sector}")
+    if len(industry) > 200:
+        raise ValueError("GICS sub-industry is too long.")
+
+    return {
+        **ticker_data,
+        "sector": sector,
+        "industry": industry or ticker_data.get("industry", "N/A"),
+    }
+
+
 def calculate_beta(stock_returns, market_returns):
     common = stock_returns.index.intersection(market_returns.index)
     if len(common) < 60:
@@ -105,6 +121,12 @@ class UniversalScoringEngine:
         self.spy_history = None
         self.market_regime = {}
         self.sector_etf_data = {}
+        self._macro_close_data = pd.DataFrame()
+        self.macro_data_error = None
+        self.macro_data_as_of = None
+        self.scoring_reference_df = pd.DataFrame()
+        self.scoring_reference_source = os.path.basename(self.baseline_csv_path)
+        self.scoring_reference_updated_at = None
         self.load_baseline()
 
     def load_baseline(self):
@@ -115,6 +137,9 @@ class UniversalScoringEngine:
         else:
             print("[Engine] Warning: Baseline CSV not found. Initializing empty.")
             self.baseline_df = pd.DataFrame()
+
+        self.scoring_reference_df = self.baseline_df
+        self.scoring_reference_source = os.path.basename(self.baseline_csv_path)
 
         # Train OLS model on baseline
         if not self.baseline_df.empty and "pred_return" in self.baseline_df.columns:
@@ -138,30 +163,89 @@ class UniversalScoringEngine:
         # Fetch macro indicators, Breadth, RSP/SPY, VIX & Sector ETFs
         self.refresh_macro_and_sector_regimes()
 
-    def refresh_macro_and_sector_regimes(self):
+    def refresh_macro_data(self):
+        """Refresh macro and sector ETF history used by beta and regime calculations."""
+        macro_syms = ["SPY", "RSP", "^VIX", "XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLU", "XLB", "XLRE", "XLC"]
+        try:
+            downloaded = yf.download(
+                macro_syms, period="2y", auto_adjust=True, progress=False
+            )
+            if downloaded.empty:
+                raise RuntimeError("Yahoo Finance returned no macro market history.")
+            m_data = downloaded["Close"]
+            if m_data.empty:
+                raise RuntimeError("Yahoo Finance returned no macro closing prices.")
+        except Exception as error:
+            self.macro_data_error = str(error)
+            print(f"[Engine] Error refreshing macro assets: {error}")
+            return False
+
+        self._macro_close_data = m_data
+        self.macro_data_error = None
+        if "SPY" in m_data.columns:
+            spy_history = m_data["SPY"].dropna()
+            if not spy_history.empty:
+                self.spy_history = spy_history
+        dates = pd.to_datetime(m_data.index, errors="coerce").dropna()
+        self.macro_data_as_of = dates.max().isoformat() if not dates.empty else None
+        return True
+
+    def update_live_market_context(self, feature_frame):
+        """Use the completed live scan as the current scoring and breadth reference."""
+        if feature_frame is None or feature_frame.empty:
+            raise ValueError("A completed live scan is required to refresh market context.")
+
+        self.scoring_reference_df = feature_frame.copy()
+        self.scoring_reference_source = "Live scanner universe"
+        self.scoring_reference_updated_at = datetime.now().isoformat(timespec="seconds")
+        self.sector_3mo_medians = (
+            feature_frame.groupby("sector")["momentum_3mo"].median().to_dict()
+            if "momentum_3mo" in feature_frame.columns else {}
+        )
+        self.sector_6mo_medians = (
+            feature_frame.groupby("sector")["momentum_6mo"].median().to_dict()
+            if "momentum_6mo" in feature_frame.columns else {}
+        )
+        self.refresh_macro_and_sector_regimes(
+            breadth_frame=feature_frame,
+            refresh_macro=False,
+        )
+
+    def refresh_macro_and_sector_regimes(self, breadth_frame=None, refresh_macro=True):
         """
         Computes composite macro market regime & sector sub-regimes:
-        1. Market Breadth: % of S&P 500 universe above 50MA (<35% Dip Hunter, <50% All-Weather Core).
+        1. Market Breadth: % of the reference universe above 50MA (<35% Dip Hunter, <50% All-Weather Core).
         2. RSP vs SPY 1-Month relative performance (penalizes Alpha Bull if RSP > SPY; penalizes All-Weather if SPY > RSP).
         3. VIX circuit breakers: VIX > 35 -> Dip Hunter lock; VIX > 55 -> Bear Market Shield / Fundamental Bag lock.
         4. Sector Sub-Regimes: tracks 11 GICS sector ETFs vs 50MA for contrarian score bonuses/haircuts.
         """
-        # 1. Breadth from baseline
-        if not self.baseline_df.empty and "price" in self.baseline_df.columns and "ma_50" in self.baseline_df.columns:
-            clean_b = self.baseline_df.dropna(subset=["price", "ma_50"])
+        if refresh_macro:
+            self.refresh_macro_data()
+
+        # 1. Breadth from the latest completed scan, or the startup baseline.
+        breadth_source_frame = (
+            breadth_frame if breadth_frame is not None else self.baseline_df
+        )
+        clean_b = pd.DataFrame()
+        clean_b_200 = pd.DataFrame()
+        if (
+            not breadth_source_frame.empty
+            and "price" in breadth_source_frame.columns
+            and "ma_50" in breadth_source_frame.columns
+        ):
+            clean_b = breadth_source_frame.dropna(subset=["price", "ma_50"])
             breadth_50 = float((clean_b["price"] > clean_b["ma_50"]).mean() * 100) if len(clean_b) > 0 else 50.0
-            breadth_200 = float((clean_b["price"] > clean_b["ma_200"]).mean() * 100) if "ma_200" in clean_b.columns else 50.0
+            if "ma_200" in breadth_source_frame.columns:
+                clean_b_200 = breadth_source_frame.dropna(subset=["price", "ma_200"])
+            breadth_200 = (
+                float((clean_b_200["price"] > clean_b_200["ma_200"]).mean() * 100)
+                if not clean_b_200.empty else 50.0
+            )
         else:
             breadth_50 = 50.0
             breadth_200 = 50.0
 
-        # 2. Batch download macro assets & sector ETFs
-        macro_syms = ["SPY", "RSP", "^VIX", "XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLU", "XLB", "XLRE", "XLC"]
-        try:
-            m_data = yf.download(macro_syms, period="2y", auto_adjust=True, progress=False)["Close"]
-        except Exception as e:
-            print(f"[Engine] Error downloading macro assets: {e}")
-            m_data = pd.DataFrame()
+        m_data = self._macro_close_data
 
         # Extract SPY
         if not m_data.empty and "SPY" in m_data.columns:
@@ -213,7 +297,7 @@ class UniversalScoringEngine:
             if breadth_50 < 35.0:
                 regime_name = f"Oversold Breadth ({breadth_50:.1f}% > 50MA)"
                 recommended_profiles = ["Dip Hunter"]
-                regime_reason = f"Broad market oversold: only {breadth_50:.1f}% of S&P 500 stocks above 50MA (<35% threshold). Prime for turnaround hunting."
+                regime_reason = f"Broad market oversold: only {breadth_50:.1f}% of scanned constituents above 50MA (<35% threshold). Prime for turnaround hunting."
                 regime_color = "#f59e0b"
             elif breadth_50 < 50.0:
                 # 35% to 50% breadth: baseline All-Weather Core
@@ -259,6 +343,13 @@ class UniversalScoringEngine:
                         "status": "below_50ma" if diff < 0 else "above_50ma",
                     }
 
+        breadth_dates = (
+            pd.to_datetime(
+                breadth_frame["price_as_of"], errors="coerce", utc=True
+            ).dropna()
+            if breadth_frame is not None and "price_as_of" in breadth_frame.columns
+            else pd.Series(dtype="datetime64[ns, UTC]")
+        )
         self.market_regime = {
             "symbol": "SPY",
             "price": round(p_now, 2),
@@ -278,6 +369,17 @@ class UniversalScoringEngine:
             "color": regime_color,
             "sector_etfs": self.sector_etf_data,
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "breadth_source": (
+                "Live scanner universe"
+                if breadth_frame is not None else "Historical baseline"
+            ),
+            "breadth_universe_count": len(clean_b),
+            "breadth_data_as_of": (
+                breadth_dates.max().isoformat()
+                if breadth_frame is not None and not breadth_dates.empty else None
+            ),
+            "macro_data_as_of": self.macro_data_as_of,
+            "macro_data_error": self.macro_data_error,
         }
 
     def fetch_ticker_data(self, ticker: str):
@@ -585,8 +687,13 @@ class UniversalScoringEngine:
                 continue
 
             # Calculate normalized percentile
-            if not self.baseline_df.empty and col_name in self.baseline_df.columns:
-                norm_rank = self.compute_percentile_rank(val, self.baseline_df[col_name])
+            if (
+                not self.scoring_reference_df.empty
+                and col_name in self.scoring_reference_df.columns
+            ):
+                norm_rank = self.compute_percentile_rank(
+                    val, self.scoring_reference_df[col_name]
+                )
             else:
                 norm_rank = 0.5
 
@@ -840,23 +947,7 @@ class UniversalScoringEngine:
         # 11. Universe Rank Percentile
         universe_percentile = self.compute_universe_percentile(raw_final_score, profile_name)
 
-        # 12. Baseline snapshot comparison if available
-        baseline_snapshot = None
-        if not self.baseline_df.empty and ticker_data["ticker"] in self.baseline_df["ticker"].values:
-            b_row = self.baseline_df[self.baseline_df["ticker"] == ticker_data["ticker"]].iloc[0]
-            b_price = float(b_row["price"])
-            price_change_pct = round((ticker_data["price"] - b_price) / b_price * 100, 1)
-            b_score = round(float(b_row.get("recommendation_score", 0)) * 100, 1) if "recommendation_score" in b_row else None
-            baseline_snapshot = {
-                "in_baseline": True,
-                "baseline_price": round(b_price, 2),
-                "baseline_score": b_score,
-                "price_change_since_scan": price_change_pct,
-                "scan_date": "Oct 01, 2026",
-            }
-
         return {
-            "baseline_snapshot": baseline_snapshot,
             "ticker": ticker_data["ticker"],
             "name": ticker_data["name"],
             "sector": ticker_data["sector"],
@@ -871,6 +962,9 @@ class UniversalScoringEngine:
             "stance_class": stance_class,
             "stance_color": stance_color,
             "universe_percentile": universe_percentile,
+            "scoring_reference_source": self.scoring_reference_source,
+            "scoring_reference_count": len(self.scoring_reference_df),
+            "scoring_reference_updated_at": self.scoring_reference_updated_at,
             "forecast": forecast,
             "leverage_flag": de_flag,
             "sector_sub_regime": sector_sub_regime_info,

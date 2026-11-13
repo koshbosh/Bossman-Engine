@@ -12,6 +12,7 @@ from universe_explorer import (
     build_gics_subindustries,
     build_industry_groups,
     normalize_ticker,
+    search_gics_companies,
 )
 
 
@@ -140,6 +141,23 @@ class UniverseExplorerTests(unittest.TestCase):
             ["Semiconductors", "Software"],
         )
         self.assertEqual(sum(row["company_count"] for row in subindustries), 2)
+
+    def test_company_search_matches_ticker_and_name_across_gics_universe(self):
+        companies = [
+            {"ticker": "MU", "name": "Micron Technology, Inc.", "industry": "Semiconductors"},
+            {"ticker": "MCO", "name": "Moody's Corporation", "industry": "Financial Data"},
+            {"ticker": "AAPL", "name": "Apple Inc.", "industry": "Technology Hardware"},
+        ]
+
+        self.assertEqual(
+            [row["ticker"] for row in search_gics_companies(companies, "micron")],
+            ["MU"],
+        )
+        self.assertEqual(
+            [row["ticker"] for row in search_gics_companies(companies, "mco")],
+            ["MCO"],
+        )
+        self.assertEqual(search_gics_companies(companies, ""), [])
 
 
 if __name__ == "__main__":

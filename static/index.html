@@ -159,9 +159,7 @@
               <span class="meta-divider">•</span>
               <span class="meta-item">Profile: <strong id="res-profile">Dip Hunter</strong></span>
               <span class="meta-divider">•</span>
-              <span class="meta-item">Universe Baseline: <strong>S&P 500 & Global Equities</strong></span>
-              <span class="meta-divider" id="res-baseline-divider" style="display: none;">•</span>
-              <span class="meta-item" id="res-baseline-pill" style="display: none; background: rgba(56, 189, 248, 0.12); color: #38bdf8; padding: 2px 8px; border-radius: 4px; font-size: 11px;"></span>
+              <span class="meta-item">Scoring Reference: <strong id="res-scoring-reference">Historical baseline</strong></span>
             </div>
           </div>
           <div class="hero-right">
@@ -570,7 +568,7 @@
           </div>
           <label class="explorer-search">
             <span>Find a company</span>
-            <input id="industry-explorer-search" type="search" placeholder="Ticker or company name">
+            <input id="industry-explorer-search" type="search" maxlength="100" placeholder="S&P 500 ticker or company name">
           </label>
           <button class="btn-secondary" onclick="loadIndustryExplorer(true)">Refresh Sources</button>
         </div>
@@ -622,7 +620,7 @@
               <tr>
                 <th>Baseline rank</th>
                 <th>Ticker / Company</th>
-                <th>Index membership</th>
+                <th>Index / GICS classification</th>
                 <th>Profile score</th>
                 <th>Action</th>
               </tr>

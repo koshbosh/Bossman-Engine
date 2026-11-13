@@ -266,6 +266,7 @@ class AutomatedMarketScanner:
                     "source_counts": source_counts,
                 })
 
+            self.engine.refresh_macro_data()
             spy_history = self.engine.spy_history
             rows = []
             failures = []
@@ -316,6 +317,7 @@ class AutomatedMarketScanner:
                 self._universe_count = len(tickers)
                 self._source_fetched_at = universe.get("fetched_at")
                 self._source_counts = source_counts
+                self.engine.update_live_market_context(feature_frame)
                 self._rank_features(profile)
                 self._state.update({
                     "status": "complete",

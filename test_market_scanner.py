@@ -9,10 +9,26 @@ from market_scanner import (
     _extract_ticker_history,
     build_live_feature_row,
 )
+from engine_service import UniversalScoringEngine, apply_gics_classification
 from recommender import calculate_ma200_bonus, normalize
 
 
 class MarketScannerTests(unittest.TestCase):
+    def test_gics_classification_supplies_sector_etf_context_for_deep_dive(self):
+        ticker_data = {"ticker": "APH", "sector": "N/A", "industry": "N/A"}
+
+        classified = apply_gics_classification(
+            ticker_data,
+            "Information Technology",
+            "Electronic Equipment & Instruments",
+        )
+
+        self.assertEqual(classified["sector"], "Information Technology")
+        self.assertEqual(classified["industry"], "Electronic Equipment & Instruments")
+        self.assertEqual(ticker_data["sector"], "N/A")
+        with self.assertRaisesRegex(ValueError, "Unknown GICS sector"):
+            apply_gics_classification(ticker_data, "Unknown sector", "Unknown industry")
+
     def test_extracts_ticker_first_and_field_first_batch_history(self):
         dates = pd.date_range("2025-01-01", periods=3, freq="B")
         history = pd.DataFrame({"Close": [10, 11, 12]}, index=dates)
@@ -73,6 +89,12 @@ class MarketScannerTests(unittest.TestCase):
                 index=dates,
             )
 
+            def refresh_macro_data(self):
+                return True
+
+            def update_live_market_context(self, feature_frame):
+                self.live_market_context = feature_frame.copy()
+
             def predict_return_ols(self, features):
                 return {"expected_return": 8.0, "prob_positive": 60.0}
 
@@ -124,6 +146,7 @@ class MarketScannerTests(unittest.TestCase):
         self.assertTrue(all(np.isfinite(row["score"]) for row in result["leaderboard"]))
         self.assertTrue(result["price_data_as_of"])
         self.assertIn("incomplete", result["source_counts"][0]["coverage_note"].lower())
+        self.assertEqual(len(scanner.engine.live_market_context), 2)
 
         reranked = scanner.get_scan("Alpha Bull")
         self.assertEqual(reranked["profile"], "Alpha Bull")
@@ -138,6 +161,36 @@ class MarketScannerTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(refreshed["status"], "complete", refreshed["message"])
         self.assertEqual(len(downloads), 2)
+
+    def test_completed_scan_updates_live_breadth_and_scoring_reference(self):
+        engine = UniversalScoringEngine.__new__(UniversalScoringEngine)
+        engine.baseline_df = pd.DataFrame()
+        engine._macro_close_data = pd.DataFrame()
+        engine.macro_data_as_of = None
+        engine.macro_data_error = None
+        engine.spy_history = None
+        engine.sector_etf_data = {}
+
+        features = pd.DataFrame({
+            "ticker": ["AAA", "BBB", "CCC", "DDD"],
+            "sector": ["Tech", "Tech", "Health", "Health"],
+            "price": [11.0, 9.0, 12.0, 8.0],
+            "ma_50": [10.0, 10.0, 10.0, 10.0],
+            "ma_200": [10.0, 10.0, 10.0, 10.0],
+            "momentum_3mo": [0.2, 0.0, 0.1, -0.1],
+            "momentum_6mo": [0.3, 0.1, 0.2, 0.0],
+            "price_as_of": ["2026-11-12"] * 4,
+        })
+
+        engine.update_live_market_context(features)
+
+        self.assertEqual(engine.market_regime["breadth_50"], 50.0)
+        self.assertEqual(engine.market_regime["breadth_200"], 50.0)
+        self.assertEqual(engine.market_regime["breadth_source"], "Live scanner universe")
+        self.assertEqual(engine.market_regime["breadth_universe_count"], 4)
+        self.assertTrue(engine.market_regime["breadth_data_as_of"].startswith("2026-11-12"))
+        self.assertEqual(engine.scoring_reference_source, "Live scanner universe")
+        self.assertEqual(engine.sector_3mo_medians["Tech"], 0.1)
 
     def test_rejects_unknown_profile_before_fetching_universe(self):
         scanner = AutomatedMarketScanner(

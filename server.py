@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 
-from engine_service import UniversalScoringEngine
+from engine_service import UniversalScoringEngine, apply_gics_classification
 from market_scanner import AutomatedMarketScanner
 from universe_explorer import (
     build_gics_sectors,
@@ -72,6 +72,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             ticker = params.get("ticker", [""])[0].strip().upper()
             profile = params.get("profile", ["Dip Hunter"])[0].strip()
             force_refresh = params.get("refresh", ["0"])[0] == "1"
+            gics_sector = params.get("gics_sector", [""])[0].strip()
+            gics_subindustry = params.get("gics_subindustry", [""])[0].strip()
 
             if not ticker:
                 return self.send_error_json("Missing 'ticker' parameter.")
@@ -90,6 +92,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     ticker_data = ENGINE.fetch_ticker_data(ticker)
                     TICKER_CACHE[ticker] = {"data": ticker_data, "timestamp": now}
 
+                ticker_data = apply_gics_classification(
+                    ticker_data, gics_sector, gics_subindustry
+                )
                 result = ENGINE.score_ticker(ticker_data, profile_name=profile)
                 result["market_regime"] = ENGINE.market_regime
                 return self.send_json(result)
@@ -173,6 +178,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             profile = params.get("profile", ["Dip Hunter"])[0].strip()
             requested_sector = params.get("sector", [""])[0]
             requested_subindustry = params.get("subindustry", [""])[0]
+            company_search = params.get("search", [""])[0].strip()[:100]
             force_refresh = params.get("refresh", [""])[0].lower() == "true"
             if profile not in RISK_LEVELS:
                 return self.send_error_json(f"Unknown scoring profile: {profile}")
@@ -219,15 +225,25 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                         if normalize_ticker(row.get("ticker"))
                     }
                 scores = INDUSTRY_SCORE_CACHE[profile]
+                if company_search:
+                    from universe_explorer import search_gics_companies
+
+                    matching_companies = search_gics_companies(
+                        gics_companies, company_search
+                    )
+                else:
+                    matching_companies = [
+                        company for company in gics_companies
+                        if company["sector"] == selected_sector
+                        and selected_subindustry is not None
+                        and company["industry"] == selected_subindustry
+                    ]
                 selected_companies = [
                     {
                         **company,
                         **scores.get(company["ticker"], {}),
                     }
-                    for company in gics_companies
-                    if company["sector"] == selected_sector
-                    and selected_subindustry is not None
-                    and company["industry"] == selected_subindustry
+                    for company in matching_companies
                 ]
                 selected_companies.sort(
                     key=lambda company: (
@@ -244,6 +260,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     "subindustries": subindustries,
                     "selected_subindustry": selected_subindustry,
                     "companies": selected_companies,
+                    "search_query": company_search or None,
+                    "search_result_count": len(selected_companies) if company_search else None,
                     "unique_company_count": len(gics_companies),
                     "selected_sector_company_count": sum(
                         company["sector"] == selected_sector for company in gics_companies

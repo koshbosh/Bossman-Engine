@@ -12,6 +12,8 @@ let universeScanRequestId = 0;
 let universeScanPollTimer = null;
 let selectedGicsSector = '';
 let selectedGicsSubindustry = '';
+let selectedIndustryCompanyContext = null;
+let industryExplorerSearchTimer = null;
 
 const PROFILE_DESCRIPTIONS = {
   'Dip Hunter': 'Turnarounds & deep discounts: rewards 3mo momentum shift, inverted 1y momentum, and deep dip MA200 bonuses.',
@@ -53,7 +55,10 @@ function setupEventListeners() {
 
   const explorerSearch = document.getElementById('industry-explorer-search');
   if (explorerSearch) {
-    explorerSearch.addEventListener('input', renderIndustryExplorerCompanies);
+    explorerSearch.addEventListener('input', () => {
+      if (industryExplorerSearchTimer) clearTimeout(industryExplorerSearchTimer);
+      industryExplorerSearchTimer = setTimeout(() => loadIndustryExplorer(), 250);
+    });
   }
 }
 
@@ -88,15 +93,17 @@ async function loadIndustryExplorer(refreshSources = false) {
   const profile = profileSelect ? profileSelect.value : currentProfile;
   if (!body || !status) return;
 
+  const search = document.getElementById('industry-explorer-search')?.value.trim() || '';
   status.textContent = refreshSources
     ? 'Refreshing GICS sector source…'
-    : 'Loading GICS sectors…';
-  body.innerHTML = '<tr><td colspan="5" class="explorer-empty">Loading GICS sector companies…</td></tr>';
+    : search ? `Searching the GICS company list for “${search}”…` : 'Loading GICS sectors…';
+  body.innerHTML = `<tr><td colspan="5" class="explorer-empty">${search ? 'Searching companies…' : 'Loading GICS sector companies…'}</td></tr>`;
 
   try {
     const params = new URLSearchParams({ profile });
     if (selectedGicsSector) params.set('sector', selectedGicsSector);
     if (selectedGicsSubindustry) params.set('subindustry', selectedGicsSubindustry);
+    if (search) params.set('search', search);
     if (refreshSources) params.set('refresh', 'true');
     const response = await fetch(`/api/industry-explorer?${params}`);
     const data = await response.json();
@@ -106,21 +113,28 @@ async function loadIndustryExplorer(refreshSources = false) {
     selectedGicsSector = data.selected_sector || '';
     selectedGicsSubindustry = data.selected_subindustry || '';
     industryExplorerCompanies = data.companies || [];
+    const activeSearch = data.search_query || '';
     document.getElementById('industry-explorer-count').textContent =
       `${data.sectors.length} sectors · ${Number(data.unique_company_count || 0).toLocaleString()} companies`;
     document.getElementById('industry-explorer-group-count').textContent =
       `${Number(data.subindustries.length).toLocaleString()} sub-industries · ${Number(data.selected_sector_company_count || 0).toLocaleString()} companies`;
     document.getElementById('industry-explorer-score-coverage').textContent =
-      selectedGicsSubindustry
+      activeSearch
+        ? `${data.score_company_count || 0} / ${industryExplorerCompanies.length} search results scored`
+        : selectedGicsSubindustry
         ? `${data.score_company_count || 0} / ${industryExplorerCompanies.length} scores available`
         : 'Choose a sub-industry to see scores';
 
     const groupTitle = document.getElementById('industry-explorer-group-title');
     const groupSubtitle = document.getElementById('industry-explorer-group-subtitle');
-    groupTitle.textContent = selectedGicsSubindustry || 'Companies';
-    groupSubtitle.textContent = selectedGicsSubindustry
-      ? `${selectedGicsSector} · GICS sub-industry`
-      : `${selectedGicsSector || 'Select a sector'} · Select a sub-industry above to see its companies.`;
+    groupTitle.textContent = activeSearch
+      ? 'Company search results'
+      : selectedGicsSubindustry || 'Companies';
+    groupSubtitle.textContent = activeSearch
+      ? `${industryExplorerCompanies.length} match${industryExplorerCompanies.length === 1 ? '' : 'es'} across the S&P 500 GICS company list`
+      : selectedGicsSubindustry
+        ? `${selectedGicsSector} · GICS sub-industry`
+        : `${selectedGicsSector || 'Select a sector'} · Select a sub-industry above to see its companies.`;
 
     renderGicsSectors(data.sectors || []);
     renderGicsSubindustries(data.subindustries || []);
@@ -240,14 +254,8 @@ function renderIndustryExplorerSources(data) {
 function renderIndustryExplorerCompanies() {
   const body = document.getElementById('industry-explorer-table-body');
   if (!body) return;
-  const search = (document.getElementById('industry-explorer-search')?.value || '')
-    .trim()
-    .toLowerCase();
-  const companies = industryExplorerCompanies.filter(company =>
-    !search ||
-    company.ticker.toLowerCase().includes(search) ||
-    company.name.toLowerCase().includes(search)
-  );
+  const search = (document.getElementById('industry-explorer-search')?.value || '').trim();
+  const companies = industryExplorerCompanies;
   body.replaceChildren();
 
   if (!companies.length) {
@@ -255,8 +263,8 @@ function renderIndustryExplorerCompanies() {
     const cell = document.createElement('td');
     cell.colSpan = 5;
     cell.className = 'explorer-empty';
-    cell.textContent = industryExplorerCompanies.length
-      ? 'No companies match this search.'
+    cell.textContent = search
+      ? `No S&P 500 GICS company matched “${search}”.`
       : selectedGicsSubindustry
         ? 'No companies are available for this GICS sub-industry.'
         : 'Select a GICS sub-industry to see its companies.';
@@ -274,14 +282,19 @@ function renderIndustryExplorerCompanies() {
     const ticker = document.createElement('button');
     ticker.className = 'explorer-ticker';
     ticker.textContent = company.ticker;
-    ticker.addEventListener('click', () => inspectScannerTicker(company.ticker));
+    ticker.addEventListener('click', () => inspectScannerTicker(company.ticker, company));
     const companyName = document.createElement('span');
     companyName.className = 'explorer-company-name';
     companyName.textContent = company.name;
     identity.append(ticker, companyName);
 
     const membership = document.createElement('td');
-    membership.textContent = (company.memberships || []).join(', ');
+    membership.textContent = [
+      (company.memberships || []).join(', '),
+      company.sector && company.industry
+        ? `${company.sector} · ${company.industry}`
+        : ''
+    ].filter(Boolean).join(' · ');
     const score = document.createElement('td');
     score.className = company.score === undefined ? 'explorer-score unavailable' : 'explorer-score';
     score.textContent = company.score === undefined ? 'Not in score baseline' : company.score.toFixed(1);
@@ -290,7 +303,7 @@ function renderIndustryExplorerCompanies() {
     const inspect = document.createElement('button');
     inspect.className = 'btn-inspect';
     inspect.textContent = 'Deep dive';
-    inspect.addEventListener('click', () => inspectScannerTicker(company.ticker));
+    inspect.addEventListener('click', () => inspectScannerTicker(company.ticker, company));
     action.appendChild(inspect);
     row.append(rank, identity, membership, score, action);
     body.appendChild(row);
@@ -316,7 +329,22 @@ async function loadMarketRegime() {
 
     if (regimeName && data.regime) {
       regimeName.textContent = `Macro: ${data.regime}`;
-      regimeSub.textContent = `SPY $${data.price} (${data.pct_vs_ma200 >= 0 ? '+' : ''}${data.pct_vs_ma200}% vs 200MA) | Updated: ${data.updated_at}`;
+      const freshness = [
+        data.breadth_data_as_of
+          ? `Breadth from ${data.breadth_source || 'scan'} (${data.breadth_universe_count} constituents) as of ${new Date(data.breadth_data_as_of).toLocaleDateString()}`
+          : '',
+        data.macro_data_as_of
+          ? `Macro data as of ${new Date(data.macro_data_as_of).toLocaleDateString()}`
+          : '',
+        data.macro_data_error
+          ? `Macro refresh failed: ${data.macro_data_error}`
+          : ''
+      ].filter(Boolean).join(' | ');
+      regimeSub.textContent = [
+        `SPY $${data.price} (${data.pct_vs_ma200 >= 0 ? '+' : ''}${data.pct_vs_ma200}% vs 200MA)`,
+        `Updated: ${data.updated_at}`,
+        freshness
+      ].filter(Boolean).join(' | ');
       if (pulseDot && data.color) {
         pulseDot.style.backgroundColor = data.color;
         pulseDot.style.boxShadow = `0 0 10px ${data.color}`;
@@ -493,9 +521,10 @@ function changeProfile(profileName) {
   }
 }
 
-function selectQuickTicker(ticker) {
+function selectQuickTicker(ticker, industryContext = null) {
   const input = document.getElementById('ticker-input');
   if (input) input.value = ticker;
+  selectedIndustryCompanyContext = industryContext;
   scoreTicker(ticker);
 }
 
@@ -506,6 +535,7 @@ function scoreCurrentTicker() {
     alert('Please enter a valid ticker symbol.');
     return;
   }
+  selectedIndustryCompanyContext = null;
   scoreTicker(val);
 }
 
@@ -527,6 +557,10 @@ async function scoreTicker(ticker, forceRefresh = false) {
       ticker: currentTicker,
       profile: currentProfile
     });
+    if (selectedIndustryCompanyContext?.sector) {
+      params.set('gics_sector', selectedIndustryCompanyContext.sector);
+      params.set('gics_subindustry', selectedIndustryCompanyContext.industry || '');
+    }
     if (forceRefresh) params.set('refresh', '1');
     const url = `/api/score?${params}`;
     const res = await fetch(url);
@@ -683,24 +717,17 @@ function renderScoredResults(data) {
   document.getElementById('res-price').textContent = `$${data.price.toFixed(2)}`;
   document.getElementById('res-price-as-of').textContent =
     data.price_as_of ? `Daily data as of ${data.price_as_of}` : 'Daily data date unavailable';
+  const scoreReference = document.getElementById('res-scoring-reference');
+  if (scoreReference) {
+    const updated = data.scoring_reference_updated_at
+      ? ` as of ${new Date(data.scoring_reference_updated_at).toLocaleString()}`
+      : '';
+    scoreReference.textContent =
+      `${data.scoring_reference_source || 'Unknown'} (${Number(data.scoring_reference_count || 0).toLocaleString()} tickers${updated})`;
+  }
 
   if (data.market_cap) {
     document.getElementById('res-market-cap').textContent = formatMarketCap(data.market_cap);
-  }
-
-  const basePill = document.getElementById('res-baseline-pill');
-  const baseDivider = document.getElementById('res-baseline-divider');
-  if (basePill && baseDivider) {
-    if (data.baseline_snapshot) {
-      const snap = data.baseline_snapshot;
-      const sign = snap.price_change_since_scan >= 0 ? '+' : '';
-      basePill.textContent = `Oct 1 Batch Scan: $${snap.baseline_price.toFixed(2)} (${sign}${snap.price_change_since_scan}% live price move)`;
-      basePill.style.display = 'inline-block';
-      baseDivider.style.display = 'inline-block';
-    } else {
-      basePill.style.display = 'none';
-      baseDivider.style.display = 'none';
-    }
   }
 
   const perf1wEl = document.getElementById('res-perf-1w');
@@ -808,13 +835,13 @@ function renderScoredResults(data) {
     }
   }
 
-  // 4b. Sector Sub-Regime Card
-  renderSectorSubRegimeCard(data.sector_sub_regime);
-
   // Update sector ETF cache if this score result includes regime data
   if (data.market_regime && data.market_regime.sector_etfs) {
     _cachedSectorEtfs = data.market_regime.sector_etfs;
   }
+
+  // 4b. Sector Sub-Regime Card
+  renderSectorSubRegimeCard(data.sector_sub_regime);
 
   // 5. Footnotes & Data Integrity Log
   const fnList = document.getElementById('footnotes-list');
@@ -1036,6 +1063,7 @@ async function runUniverseScan(refresh = false, existingRequestId = null) {
     if (data.status === 'error') {
       throw new Error(data.message || 'The live market scan failed.');
     }
+    if (data.status === 'complete') await loadMarketRegime();
 
     tbody.innerHTML = '';
     if (data.leaderboard && data.leaderboard.length > 0) {
@@ -1100,9 +1128,12 @@ async function runUniverseScan(refresh = false, existingRequestId = null) {
   }
 }
 
-function inspectScannerTicker(t) {
+function inspectScannerTicker(t, companyContext = null) {
   switchMainView('single');
-  selectQuickTicker(t);
+  selectQuickTicker(t, companyContext ? {
+    sector: companyContext.sector,
+    industry: companyContext.industry
+  } : null);
 }
 
 // ── Multi-Stock Compare View ──────────────────────────────────────────
