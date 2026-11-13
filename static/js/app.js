@@ -29,7 +29,7 @@ async function initApp() {
   setupEventListeners();
   await loadMarketRegime();
   // Automatically score initial ticker to display full data immediately
-  scoreTicker(currentTicker);
+  scoreTicker(currentTicker, true);
 }
 
 function setupEventListeners() {
@@ -510,7 +510,7 @@ function scoreCurrentTicker() {
 }
 
 // ── Core Scoring Query ────────────────────────────────────────────────
-async function scoreTicker(ticker) {
+async function scoreTicker(ticker, forceRefresh = false) {
   currentTicker = ticker.toUpperCase();
   entryZoneRequestId += 1;
 
@@ -523,7 +523,12 @@ async function scoreTicker(ticker) {
   if (resultsEl) resultsEl.style.opacity = '0.35';
 
   try {
-    const url = `/api/score?ticker=${encodeURIComponent(currentTicker)}&profile=${encodeURIComponent(currentProfile)}`;
+    const params = new URLSearchParams({
+      ticker: currentTicker,
+      profile: currentProfile
+    });
+    if (forceRefresh) params.set('refresh', '1');
+    const url = `/api/score?${params}`;
     const res = await fetch(url);
     const data = await res.json();
 
@@ -676,6 +681,8 @@ function renderScoredResults(data) {
   document.getElementById('res-industry').textContent = data.industry || 'General';
   document.getElementById('res-profile').textContent = data.profile;
   document.getElementById('res-price').textContent = `$${data.price.toFixed(2)}`;
+  document.getElementById('res-price-as-of').textContent =
+    data.price_as_of ? `Daily data as of ${data.price_as_of}` : 'Daily data date unavailable';
 
   if (data.market_cap) {
     document.getElementById('res-market-cap').textContent = formatMarketCap(data.market_cap);

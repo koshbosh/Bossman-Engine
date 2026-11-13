@@ -587,6 +587,12 @@ body {
   gap: 12px;
 }
 
+.price-as-of {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .live-price {
   font-family: var(--font-mono);
   font-size: 32px;

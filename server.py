@@ -71,6 +71,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/score":
             ticker = params.get("ticker", [""])[0].strip().upper()
             profile = params.get("profile", ["Dip Hunter"])[0].strip()
+            force_refresh = params.get("refresh", ["0"])[0] == "1"
 
             if not ticker:
                 return self.send_error_json("Missing 'ticker' parameter.")
@@ -79,7 +80,11 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 # Check cache for raw ticker metrics
                 now = time.time()
                 cached = TICKER_CACHE.get(ticker)
-                if cached and (now - cached["timestamp"]) < CACHE_TTL:
+                if (
+                    not force_refresh
+                    and cached
+                    and (now - cached["timestamp"]) < CACHE_TTL
+                ):
                     ticker_data = cached["data"]
                 else:
                     ticker_data = ENGINE.fetch_ticker_data(ticker)
