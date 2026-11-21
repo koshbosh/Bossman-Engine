@@ -19,6 +19,7 @@ from datetime import datetime
 
 from engine_service import UniversalScoringEngine, apply_gics_classification
 from market_scanner import AutomatedMarketScanner
+from recommender import RISK_LEVELS
 
 from universe_explorer import (
     build_gics_sectors,
@@ -431,7 +432,6 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
 
         # ── API: Profile Metadata ─────────────────────────────────────
         elif path == "/api/profiles":
-            from recommender import RISK_LEVELS
             profiles_meta = {
                 "Dip Hunter": {
                     "tagline": "Turnaround & Mean Reversion",
