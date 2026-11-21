@@ -357,6 +357,15 @@ class MarketScannerTests(unittest.TestCase):
         self.assertIsNone(engine.market_regime["breadth_50"])
         self.assertIsNone(engine.market_regime["vix"])
 
+    def test_engine_startup_does_not_fetch_macro_data(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_path = f"{temp_dir}/missing-baseline.csv"
+            with patch("engine_service.yf.download") as download:
+                engine = UniversalScoringEngine(baseline_csv_path=baseline_path)
+
+            download.assert_not_called()
+            self.assertEqual(engine.market_regime["regime"], "Market data unavailable")
+
     def test_ols_proxy_is_unavailable_instead_of_imputing_missing_inputs(self):
         class NoCallModel:
             def predict(self, _features):

@@ -208,8 +208,9 @@ class UniversalScoringEngine:
             self.sector_3mo_medians = {}
             self.sector_6mo_medians = {}
 
-        # Fetch macro indicators, Breadth, RSP/SPY, VIX & Sector ETFs
-        self.refresh_macro_and_sector_regimes()
+        # Initialize an unavailable macro snapshot; the live scanner refreshes
+        # market data after the web server has bound its port.
+        self.refresh_macro_and_sector_regimes(refresh_macro=False)
 
     def refresh_macro_data(self):
         """Refresh macro and sector ETF history used by beta and regime calculations."""
