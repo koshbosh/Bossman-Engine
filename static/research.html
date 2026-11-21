@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="A source-first workspace for company and macro research.">
+  <title>Research Desk — Basak Bossman Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/research.css?v=3">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/research.html" aria-label="Research Desk home">
+        <span class="brand-mark">R<span>.</span></span>
+        <span class="brand-copy"><strong>Research Desk</strong><small>by Bossman Engine</small></span>
+      </a>
+
+      <div class="workspace-label">WORKSPACE</div>
+      <nav class="side-nav" aria-label="Research sections">
+        <button class="side-link active" data-page="overview"><span class="nav-icon">◫</span>Company overview</button>
+        <button class="side-link" data-page="filings"><span class="nav-icon">▤</span>Filings &amp; sources</button>
+        <button class="side-link" data-page="thesis"><span class="nav-icon">⌁</span>Thesis builder</button>
+        <button class="side-link" data-page="macro"><span class="nav-icon">⌘</span>Macro monitor</button>
+      </nav>
+
+      <div class="watchlist-heading">
+        <span class="workspace-label">WATCHLIST</span>
+        <button class="icon-button" id="add-watchlist" aria-label="Add company to watchlist" title="Add company">+</button>
+      </div>
+      <div class="watchlist" id="watchlist" aria-label="Company watchlist"></div>
+      <div class="sidebar-bottom">
+        <span class="demo-led" id="research-status-led"></span>
+        <span id="research-status-label">Checking research setup…</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="breadcrumb"><span>Workspace</span><span class="crumb-divider">/</span><strong id="breadcrumb-current">Company overview</strong></div>
+        <form class="global-search" id="company-search">
+          <span aria-hidden="true">⌕</span>
+          <label class="sr-only" for="search-input">Search or add a ticker</label>
+          <input id="search-input" type="text" placeholder="Find or add a ticker…" autocomplete="off" maxlength="10">
+          <kbd>↵</kbd>
+        </form>
+        <a class="engine-link" href="/"><span>↗</span> Scoring engine</a>
+      </header>
+
+      <div class="demo-banner">
+        <span class="banner-icon">i</span>
+        <p><strong>AI data note</strong> — your question and retrieved SEC excerpts, plus market data for entry-zone questions, are sent to the configured AI provider. Browser notes are not sent. Verify cited sources; this is not investment advice.</p>
+        <button id="dismiss-banner" aria-label="Dismiss AI data note">×</button>
+      </div>
+
+      <section class="page-content" id="page-content" aria-live="polite"></section>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <script src="/js/research.js?v=3"></script>
+</body>
+</html>

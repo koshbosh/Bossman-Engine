@@ -6,6 +6,10 @@ __pycache__/
 # Large backtest raw datasets (not needed for live server)
 factor_raw_data.csv
 score_backtest_raw_data.csv
+/backtest_results/regime_factor_*.csv
+/backtest_results/regime_factor_metadata.json
+/backtest_results/alpha_bull_weight_*.csv
+/backtest_results/alpha_bull_weight_metadata.json
 
 # Environments & OS
 .env

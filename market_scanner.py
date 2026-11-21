@@ -11,6 +11,7 @@ import yfinance as yf
 
 from recommender import RISK_LEVELS, calculate_ma_proximity, generate_recommendations
 from universe_explorer import get_market_universe, normalize_ticker
+from market_data import prepare_daily_price_history
 
 HISTORY_PERIOD = "2y"
 DOWNLOAD_CHUNK_SIZE = 80
@@ -37,14 +38,17 @@ def _extract_ticker_history(download, ticker):
 
 def _calculate_beta(stock_returns, market_returns):
     if market_returns is None or market_returns.empty:
-        return 1.0
+        return np.nan
     common = stock_returns.index.intersection(market_returns.index)
     if len(common) < 60:
-        return 1.0
+        return np.nan
     stock = stock_returns.loc[common].to_numpy(dtype=float)
     market = market_returns.loc[common].to_numpy(dtype=float)
     variance = np.var(market)
-    return float(np.cov(stock, market)[0, 1] / variance) if variance > 0 else 1.0
+    if not np.isfinite(variance) or variance <= 0:
+        return np.nan
+    beta = float(np.cov(stock, market, ddof=0)[0, 1] / variance)
+    return beta if np.isfinite(beta) else np.nan
 
 
 def build_live_feature_row(ticker, history, company, spy_history=None):
@@ -61,10 +65,11 @@ def build_live_feature_row(ticker, history, company, spy_history=None):
     price = float(close.iloc[-1])
     returns = close.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
     volume = (
-        pd.to_numeric(history["Volume"], errors="coerce").fillna(0)
+        pd.to_numeric(history["Volume"], errors="coerce")
         if "Volume" in history.columns
-        else pd.Series(0, index=close.index)
+        else pd.Series(np.nan, index=close.index)
     )
+    volume = volume.replace([np.inf, -np.inf], np.nan).where(volume >= 0)
     momentum = {}
     for key, sessions in (
         ("momentum_1mo", 21),
@@ -73,8 +78,8 @@ def build_live_feature_row(ticker, history, company, spy_history=None):
         ("momentum_1y", 252),
     ):
         momentum[key] = (
-            float(price / close.iloc[-sessions] - 1)
-            if len(close) >= sessions
+            float(price / close.iloc[-(sessions + 1)] - 1)
+            if len(close) >= sessions + 1
             else np.nan
         )
 
@@ -92,8 +97,8 @@ def build_live_feature_row(ticker, history, company, spy_history=None):
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean().iloc[-1]
     rsi = (
         float(100 - (100 / (1 + (gain / (loss + 1e-9)))))
-        if pd.notna(gain)
-        else 50.0
+        if pd.notna(gain) and pd.notna(loss)
+        else np.nan
     )
     vol_window = min(len(returns), 252)
     annualized_vol = (
@@ -107,9 +112,18 @@ def build_live_feature_row(ticker, history, company, spy_history=None):
         else None
     )
     beta = _calculate_beta(returns, spy_returns)
-    current_volume = float(volume.iloc[-1]) if len(volume) else 0.0
-    average_volume = float(volume.tail(20).mean()) if len(volume) >= 20 else current_volume
-    perf_1w = float(price / close.iloc[-5] - 1) if len(close) >= 5 else np.nan
+    current_volume = (
+        float(volume.iloc[-1])
+        if len(volume) and pd.notna(volume.iloc[-1]) and volume.iloc[-1] >= 0
+        else np.nan
+    )
+    recent_volume = volume.iloc[-21:-1]
+    average_volume = (
+        float(recent_volume.mean())
+        if len(recent_volume) == 20 and recent_volume.notna().all()
+        else np.nan
+    )
+    perf_1w = float(price / close.iloc[-6] - 1) if len(close) >= 6 else np.nan
 
     return {
         "ticker": ticker,
@@ -165,6 +179,7 @@ class AutomatedMarketScanner:
             "price_data_as_of": None,
             "source_counts": [],
             "score_baseline_source": None,
+            "source_refresh_error": None,
             "failures": [],
         }
         self._feature_frame = None
@@ -205,6 +220,15 @@ class AutomatedMarketScanner:
                 self._rank_features(profile)
             return self._public_state()
 
+    def has_fresh_scoring_reference(self):
+        with self._lock:
+            return (
+                self._state["status"] == "complete"
+                and self._feature_frame is not None
+                and not self._feature_frame.empty
+                and time.time() - self._feature_frame_updated_at < self.cache_ttl_seconds
+            )
+
     def _start_scan(self, profile):
         self._state = {
             **self._state,
@@ -223,6 +247,7 @@ class AutomatedMarketScanner:
             "price_data_as_of": None,
             "source_counts": [],
             "score_baseline_source": None,
+            "source_refresh_error": None,
             "failures": [],
         }
         thread = threading.Thread(
@@ -264,6 +289,7 @@ class AutomatedMarketScanner:
                     "total_in_universe": len(tickers),
                     "source_fetched_at": self._source_fetched_at,
                     "source_counts": source_counts,
+                    "source_refresh_error": universe.get("refresh_error"),
                 })
 
             self.engine.refresh_macro_data()
@@ -285,6 +311,7 @@ class AutomatedMarketScanner:
                     company = deduplicated[ticker]
                     try:
                         history = _extract_ticker_history(downloaded, ticker)
+                        history = prepare_daily_price_history(history, ticker)
                         feature_row = build_live_feature_row(
                             ticker,
                             history,
@@ -362,6 +389,9 @@ class AutomatedMarketScanner:
             user_profile=profile,
             top_n=None,
         )
+        ranked = ranked[
+            np.isfinite(pd.to_numeric(ranked["recommendation_score"], errors="coerce"))
+        ]
         ranked = ranked.sort_values(
             ["recommendation_score", "ticker"],
             ascending=[False, True],

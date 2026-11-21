@@ -1,5 +1,8 @@
+from datetime import date, timedelta
+import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -10,10 +13,94 @@ from market_scanner import (
     build_live_feature_row,
 )
 from engine_service import UniversalScoringEngine, apply_gics_classification
-from recommender import calculate_ma200_bonus, normalize
+from market_data import prepare_daily_price_history
+from recommender import (
+    calculate_ma200_bonus,
+    calculate_ma_proximity,
+    calculate_overextended_momentum_penalty,
+    generate_recommendations,
+    normalize,
+)
 
 
 class MarketScannerTests(unittest.TestCase):
+    def test_ma_proximity_only_penalizes_material_upside_extension(self):
+        self.assertEqual(calculate_ma_proximity(79.24, 168.19), 0.0)
+        self.assertEqual(calculate_ma_proximity(100, 100), 0.0)
+        self.assertEqual(calculate_ma_proximity(110, 100), 0.0)
+        self.assertAlmostEqual(calculate_ma_proximity(120, 100), -0.05)
+
+    def test_weekly_overextension_is_checked_when_monthly_history_is_missing(self):
+        self.assertEqual(
+            calculate_overextended_momentum_penalty(None, 0.11),
+            0.5,
+        )
+
+    def test_daily_history_is_sorted_deduplicated_and_keeps_only_valid_closes(self):
+        now = pd.Timestamp("2026-03-16")
+        dates = pd.date_range(end=now, periods=22, freq="B")
+        history = pd.DataFrame(
+            {"Close": np.arange(22, dtype=float) + 10},
+            index=dates,
+        )
+        history.iloc[2, history.columns.get_loc("Close")] = np.nan
+        history = pd.concat([history, history.iloc[[-1]]]).iloc[::-1]
+
+        cleaned = prepare_daily_price_history(
+            history,
+            "AAA",
+            now=now,
+        )
+
+        self.assertEqual(len(cleaned), 21)
+        self.assertTrue(cleaned.index.is_monotonic_increasing)
+        self.assertTrue(cleaned.index.is_unique)
+        self.assertTrue((cleaned["Close"] > 0).all())
+
+    def test_daily_history_rejects_stale_and_future_closes(self):
+        now = pd.Timestamp("2026-03-16")
+        stale = pd.DataFrame(
+            {"Close": np.arange(20, dtype=float) + 10},
+            index=pd.date_range(end=now - timedelta(days=8), periods=20, freq="B"),
+        )
+        future = pd.DataFrame(
+            {"Close": np.arange(20, dtype=float) + 10},
+            index=pd.date_range(end=now + timedelta(days=3), periods=20, freq="B"),
+        )
+
+        with self.assertRaisesRegex(ValueError, "stale"):
+            prepare_daily_price_history(stale, "AAA", now=now)
+        with self.assertRaisesRegex(ValueError, "future"):
+            prepare_daily_price_history(future, "AAA", now=now)
+
+    def test_baseline_ma_proximity_is_rebuilt_from_price_and_averages(self):
+        baseline = pd.DataFrame([{
+            "ticker": "SNDK",
+            "sector": "Information Technology",
+            "price": 1728.43,
+            "ma_50": 1536.29,
+            "ma_200": 1130.35,
+            "ma50_proximity": 0.0,
+            "ma200_proximity": 0.0,
+            "momentum_3mo": -0.57,
+            "momentum_6mo": -0.60,
+        }])
+
+        with tempfile.NamedTemporaryFile(suffix=".csv") as file:
+            baseline.to_csv(file.name, index=False)
+            engine = UniversalScoringEngine.__new__(UniversalScoringEngine)
+            engine.baseline_csv_path = file.name
+            engine.features_list = []
+            with patch.object(engine, "refresh_macro_and_sector_regimes"):
+                engine.load_baseline()
+
+        row = engine.baseline_df.iloc[0]
+        self.assertEqual(row["ma50_proximity"], 0.0)
+        self.assertAlmostEqual(
+            row["ma200_proximity"],
+            -((1728.43 - 1130.35) / 1130.35 - 0.15),
+        )
+
     def test_gics_classification_supplies_sector_etf_context_for_deep_dive(self):
         ticker_data = {"ticker": "APH", "sector": "N/A", "industry": "N/A"}
 
@@ -46,7 +133,10 @@ class MarketScannerTests(unittest.TestCase):
         self.assertTrue(_extract_ticker_history(ticker_first, "BBB").empty)
 
     def test_short_history_keeps_unavailable_factors_missing(self):
-        dates = pd.date_range("2026-01-01", periods=30, freq="B")
+        dates = pd.bdate_range(
+            end=date.today() - timedelta(days=1),
+            periods=30,
+        )
         history = pd.DataFrame(
             {
                 "Close": np.linspace(20, 30, len(dates)),
@@ -61,20 +151,52 @@ class MarketScannerTests(unittest.TestCase):
         self.assertTrue(np.isnan(features["momentum_1y"]))
         self.assertTrue(np.isnan(features["ma50_proximity"]))
         self.assertTrue(np.isnan(features["ma200_proximity"]))
+        self.assertAlmostEqual(
+            features["momentum_1mo"],
+            features["price"] / history["Close"].iloc[-22] - 1,
+        )
+        self.assertAlmostEqual(
+            features["perf_1w"],
+            features["price"] / history["Close"].iloc[-6] - 1,
+        )
         self.assertEqual(features["price_as_of"], dates[-1].isoformat())
 
-    def test_normalization_assigns_neutral_values_to_missing_factors(self):
+    def test_volume_surge_baseline_excludes_the_current_session(self):
+        dates = pd.bdate_range(
+            end=date.today() - timedelta(days=1),
+            periods=30,
+        )
+        volume = np.full(len(dates), 1000.0)
+        volume[-1] = 4000.0
+        history = pd.DataFrame(
+            {
+                "Close": np.linspace(20, 30, len(dates)),
+                "Volume": volume,
+            },
+            index=dates,
+        )
+
+        features = build_live_feature_row("AAA", history, {"name": "Example"})
+
+        self.assertEqual(features["current_volume"], 4000.0)
+        self.assertEqual(features["avg_volume"], 1000.0)
+
+    def test_normalization_preserves_missing_factors(self):
         normalized = normalize(pd.Series([1.0, np.nan, 3.0]))
-        self.assertEqual(normalized.iloc[1], 0.5)
-        self.assertTrue(np.isfinite(normalized).all())
+        self.assertTrue(np.isnan(normalized.iloc[1]))
+        self.assertTrue(np.isfinite(normalized.dropna()).all())
         all_missing = normalize(pd.Series([np.nan, np.nan]))
-        self.assertEqual(all_missing.tolist(), [0.5, 0.5])
+        self.assertTrue(all_missing.isna().all())
         constant = normalize(pd.Series([2.0, 2.0, np.nan]))
-        self.assertEqual(constant.tolist(), [0.5, 0.5, 0.5])
+        self.assertEqual(constant.iloc[:2].tolist(), [0.5, 0.5])
+        self.assertTrue(np.isnan(constant.iloc[2]))
         self.assertEqual(calculate_ma200_bonus(70, 100, np.nan), 1.0)
 
     def test_scans_live_batch_data_tracks_failures_and_reranks_cached_features(self):
-        dates = pd.date_range("2025-08-01", periods=300, freq="B")
+        dates = pd.bdate_range(
+            end=date.today() - timedelta(days=1),
+            periods=300,
+        )
         histories = {}
         for ticker, trend in (("AAA", 0.0007), ("BBB", -0.0002)):
             close = 50 * (1 + trend) ** np.arange(len(dates))
@@ -161,6 +283,103 @@ class MarketScannerTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(refreshed["status"], "complete", refreshed["message"])
         self.assertEqual(len(downloads), 2)
+
+    def test_scanner_recommendations_do_not_assign_neutral_scores_to_missing_rows(self):
+        features = pd.DataFrame([
+            {
+                "ticker": "AAA",
+                "sector": "Industrials",
+                "price": 100.0,
+                "momentum_3mo": 0.2,
+                "momentum_1mo": 0.1,
+                "momentum_6mo": np.nan,
+                "momentum_1y": np.nan,
+                "ma50_proximity": np.nan,
+                "ma200_proximity": np.nan,
+                "annualized_vol": np.nan,
+                "rsi": np.nan,
+                "beta": np.nan,
+                "ma_50": np.nan,
+                "ma_200": np.nan,
+                "perf_1w": np.nan,
+                "current_volume": np.nan,
+                "avg_volume": np.nan,
+            },
+            {
+                "ticker": "BBB",
+                "sector": "Industrials",
+                "price": 100.0,
+                "momentum_3mo": np.nan,
+                "momentum_1mo": np.nan,
+                "momentum_6mo": np.nan,
+                "momentum_1y": np.nan,
+                "ma50_proximity": np.nan,
+                "ma200_proximity": np.nan,
+                "annualized_vol": np.nan,
+                "rsi": np.nan,
+                "beta": np.nan,
+                "ma_50": np.nan,
+                "ma_200": np.nan,
+                "perf_1w": np.nan,
+                "current_volume": np.nan,
+                "avg_volume": np.nan,
+            },
+        ])
+
+        ranked = generate_recommendations(
+            features,
+            user_profile="Dip Hunter",
+            top_n=None,
+        )
+
+        scores = ranked.set_index("ticker")["recommendation_score"]
+        self.assertTrue(np.isfinite(scores["AAA"]))
+        self.assertTrue(np.isnan(scores["BBB"]))
+
+    def test_macro_regime_is_unavailable_without_complete_fresh_inputs(self):
+        engine = UniversalScoringEngine.__new__(UniversalScoringEngine)
+        engine.baseline_df = pd.DataFrame({
+            "price": [120.0],
+            "ma_50": [100.0],
+            "ma_200": [90.0],
+        })
+        engine._macro_close_data = pd.DataFrame()
+        engine.macro_data_as_of = None
+        engine.macro_data_error = "macro feed unavailable"
+        engine.spy_history = None
+        engine.sector_etf_data = {}
+
+        engine.refresh_macro_and_sector_regimes(refresh_macro=False)
+
+        self.assertEqual(engine.market_regime["regime"], "Market data unavailable")
+        self.assertEqual(engine.market_regime["recommended_profiles"], [])
+        self.assertIsNone(engine.market_regime["price"])
+        self.assertIsNone(engine.market_regime["breadth_50"])
+        self.assertIsNone(engine.market_regime["vix"])
+
+    def test_ols_proxy_is_unavailable_instead_of_imputing_missing_inputs(self):
+        class NoCallModel:
+            def predict(self, _features):
+                raise AssertionError("The model must not receive imputed values.")
+
+        engine = UniversalScoringEngine.__new__(UniversalScoringEngine)
+        engine.features_list = [
+            "pe_ratio",
+            "debt_to_equity",
+            "ma50_proximity",
+            "ma200_proximity",
+            "momentum_1y",
+            "rsi",
+            "annualized_vol",
+            "beta",
+        ]
+        engine.ols_model = NoCallModel()
+
+        forecast = engine.predict_return_ols({"pe_ratio": 12.0})
+
+        self.assertIsNone(forecast["expected_return"])
+        self.assertEqual(forecast["validation_status"], "unavailable")
+        self.assertIn("debt_to_equity", forecast["reason"])
 
     def test_completed_scan_updates_live_breadth_and_scoring_reference(self):
         engine = UniversalScoringEngine.__new__(UniversalScoringEngine)

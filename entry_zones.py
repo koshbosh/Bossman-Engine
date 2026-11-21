@@ -199,9 +199,18 @@ def build_entry_zone_analysis(engine, ticker_data, profile_name):
         raise ValueError("Aligned adjusted daily OHLC history is required for entry-zone analysis.")
     if not (len(close_history) == len(open_history) == len(high_history) == len(low_history)):
         raise ValueError("Aligned adjusted daily OHLC history is unavailable.")
+    if not all(
+        math.isfinite(float(value)) and float(value) > 0
+        for series in (close_history, open_history, high_history, low_history)
+        for value in series
+    ):
+        raise ValueError("Adjusted OHLC history contains missing or invalid daily bars.")
 
     price = float(ticker_data["price"])
-    annualized_vol = float(ticker_data["annualized_vol"])
+    annualized_vol = ticker_data.get("annualized_vol")
+    if annualized_vol is None or not math.isfinite(float(annualized_vol)):
+        raise ValueError("A valid annualized volatility estimate is required.")
+    annualized_vol = float(annualized_vol)
     sigma_21d = annualized_vol * math.sqrt(21 / TRADING_DAYS_PER_YEAR)
     if not math.isfinite(sigma_21d) or sigma_21d <= 0:
         raise ValueError("A positive annualized volatility estimate is required.")

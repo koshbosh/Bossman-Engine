@@ -29,9 +29,47 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function initApp() {
   setupEventListeners();
-  await loadMarketRegime();
-  // Automatically score initial ticker to display full data immediately
-  scoreTicker(currentTicker, true);
+  const loadingEl = document.getElementById('loading-state');
+  const loadingTicker = document.getElementById('loading-ticker');
+  if (loadingEl) loadingEl.classList.remove('hidden');
+  if (loadingTicker) loadingTicker.textContent = 'Refreshing market universe';
+
+  try {
+    await loadMarketRegime();
+    await waitForLiveScoringReference();
+    await loadMarketRegime();
+    await scoreTicker(currentTicker, true);
+  } catch (error) {
+    if (loadingEl) loadingEl.classList.add('hidden');
+    const tag = document.getElementById('res-percentile-tag');
+    const summary = document.getElementById('res-score-summary');
+    if (tag) tag.textContent = 'Fresh scan required';
+    if (summary) summary.textContent = `Scoring is unavailable until a live universe scan completes: ${error.message}`;
+  }
+}
+
+async function waitForLiveScoringReference() {
+  const status = document.getElementById('scan-status-message');
+  const deadline = Date.now() + 10 * 60 * 1000;
+  let url = `/api/scan?profile=${encodeURIComponent(currentProfile)}&refresh=true`;
+  while (true) {
+    if (Date.now() >= deadline) {
+      throw new Error('The live universe scan did not finish within 10 minutes.');
+    }
+    const response = await fetch(url);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'The live market scan could not be started.');
+    if (data.status === 'error') throw new Error(data.message || 'The live market scan failed.');
+    if (data.status === 'complete') {
+      if (Number(data.scoreable_count) < 1) {
+        throw new Error('The live scan found no constituents with enough valid data to score.');
+      }
+      return data;
+    }
+    if (status) status.textContent = data.message || 'Refreshing the live scoring reference…';
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    url = `/api/scan?profile=${encodeURIComponent(currentProfile)}`;
+  }
 }
 
 function setupEventListeners() {
@@ -297,7 +335,9 @@ function renderIndustryExplorerCompanies() {
     ].filter(Boolean).join(' · ');
     const score = document.createElement('td');
     score.className = company.score === undefined ? 'explorer-score unavailable' : 'explorer-score';
-    score.textContent = company.score === undefined ? 'Not in score baseline' : company.score.toFixed(1);
+    score.textContent = company.score === undefined
+      ? 'Not in live scoring reference'
+      : company.score.toFixed(1);
 
     const action = document.createElement('td');
     const inspect = document.createElement('button');
@@ -340,8 +380,13 @@ async function loadMarketRegime() {
           ? `Macro refresh failed: ${data.macro_data_error}`
           : ''
       ].filter(Boolean).join(' | ');
+      const spySummary = Number.isFinite(data.price)
+        ? `SPY $${data.price.toFixed(2)}${Number.isFinite(data.pct_vs_ma200)
+          ? ` (${data.pct_vs_ma200 >= 0 ? '+' : ''}${data.pct_vs_ma200.toFixed(2)}% vs 200MA)`
+          : ''}`
+        : 'SPY data unavailable';
       regimeSub.textContent = [
-        `SPY $${data.price} (${data.pct_vs_ma200 >= 0 ? '+' : ''}${data.pct_vs_ma200}% vs 200MA)`,
+        spySummary,
         `Updated: ${data.updated_at}`,
         freshness
       ].filter(Boolean).join(' | ');
@@ -351,32 +396,49 @@ async function loadMarketRegime() {
       }
       if (regimePill && data.recommended_profiles && data.recommended_profiles.length > 0) {
         regimePill.textContent = `Optimal: ${data.recommended_profiles.join(' / ')}`;
+      } else if (regimePill) {
+        regimePill.textContent = 'Optimal: N/A';
       }
     }
 
     // Breadth badge
-    if (breadthBadge && data.breadth_50 !== undefined) {
-      breadthBadge.textContent = `Breadth: ${data.breadth_50}%`;
-      breadthBadge.className = 'macro-metric-badge';
-      if (data.breadth_50 < 35) breadthBadge.classList.add('highlight-dip');
-      else if (data.breadth_50 < 50) breadthBadge.classList.add('highlight-core');
-      else breadthBadge.classList.add('highlight-bull');
+    if (breadthBadge) {
+      if (!Number.isFinite(data.breadth_50)) {
+        breadthBadge.textContent = 'Breadth: N/A';
+        breadthBadge.className = 'macro-metric-badge';
+      } else {
+        breadthBadge.textContent = `Breadth: ${data.breadth_50.toFixed(1)}%`;
+        breadthBadge.className = 'macro-metric-badge';
+        if (data.breadth_50 < 35) breadthBadge.classList.add('highlight-dip');
+        else if (data.breadth_50 < 50) breadthBadge.classList.add('highlight-core');
+        else breadthBadge.classList.add('highlight-bull');
+      }
     }
 
     // RSP/SPY badge
-    if (rspBadge && data.rsp_spy_diff !== undefined) {
-      const sign = data.rsp_spy_diff >= 0 ? '+' : '';
-      rspBadge.textContent = `RSP/SPY: ${sign}${data.rsp_spy_diff.toFixed(1)}%`;
-      rspBadge.className = 'macro-metric-badge';
-      if (data.rsp_outperforming) rspBadge.classList.add('highlight-core');
+    if (rspBadge) {
+      if (!Number.isFinite(data.rsp_spy_diff)) {
+        rspBadge.textContent = 'RSP/SPY: N/A';
+        rspBadge.className = 'macro-metric-badge';
+      } else {
+        const sign = data.rsp_spy_diff >= 0 ? '+' : '';
+        rspBadge.textContent = `RSP/SPY: ${sign}${data.rsp_spy_diff.toFixed(1)}%`;
+        rspBadge.className = 'macro-metric-badge';
+        if (data.rsp_outperforming) rspBadge.classList.add('highlight-core');
+      }
     }
 
     // VIX badge
-    if (vixBadge && data.vix !== undefined) {
-      vixBadge.textContent = `VIX: ${data.vix.toFixed(1)}`;
-      vixBadge.className = 'macro-metric-badge';
-      if (data.vix >= 55) vixBadge.classList.add('highlight-vix-panic');
-      else if (data.vix >= 35) vixBadge.classList.add('highlight-dip');
+    if (vixBadge) {
+      if (!Number.isFinite(data.vix)) {
+        vixBadge.textContent = 'VIX: N/A';
+        vixBadge.className = 'macro-metric-badge';
+      } else {
+        vixBadge.textContent = `VIX: ${data.vix.toFixed(1)}`;
+        vixBadge.className = 'macro-metric-badge';
+        if (data.vix >= 55) vixBadge.classList.add('highlight-vix-panic');
+        else if (data.vix >= 35) vixBadge.classList.add('highlight-dip');
+      }
     }
 
     // Cache sector ETFs for the radar modal
@@ -466,8 +528,18 @@ function renderSectorSubRegimeCard(sectorInfo) {
     if (etfSym) etfSym.textContent = 'N/A';
     if (etfPrice) etfPrice.textContent = '';
     if (diffVal) diffVal.textContent = 'N/A';
-    if (effectTag) effectTag.textContent = 'Sector not mapped';
-    if (descEl) descEl.textContent = 'No matching GICS sector ETF found. Score impact: neutral.';
+    if (effectTag) effectTag.textContent = 'No sector ETF mapped';
+    if (descEl) descEl.textContent = 'No matching GICS sector ETF is mapped for this classification.';
+    return;
+  }
+
+  if (sectorInfo.status === 'unavailable') {
+    if (badge) { badge.textContent = 'Data Unavailable'; badge.className = 'badge-flag neutral'; }
+    if (etfSym) etfSym.textContent = sectorInfo.etf;
+    if (etfPrice) etfPrice.textContent = 'N/A';
+    if (diffVal) diffVal.textContent = 'N/A';
+    if (effectTag) effectTag.textContent = sectorInfo.effect_str;
+    if (descEl) descEl.textContent = sectorInfo.desc;
     return;
   }
 
@@ -481,9 +553,13 @@ function renderSectorSubRegimeCard(sectorInfo) {
   if (etfSym) etfSym.textContent = sectorInfo.etf;
   if (etfPrice) etfPrice.textContent = etfData.price ? `$${etfData.price.toFixed(2)}` : '';
   if (diffVal) {
-    const diff = etfData.diff_pct !== undefined ? etfData.diff_pct : 0;
-    diffVal.textContent = `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%`;
-    diffVal.style.color = isOpp ? 'var(--emerald)' : 'var(--amber)';
+    const diff = etfData.diff_pct;
+    diffVal.textContent = Number.isFinite(diff)
+      ? `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}%`
+      : 'N/A';
+    diffVal.style.color = Number.isFinite(diff)
+      ? isOpp ? 'var(--emerald)' : 'var(--amber)'
+      : 'var(--text-muted)';
   }
   if (statusBox) {
     statusBox.style.borderLeftColor = isOpp ? 'var(--emerald)' : 'var(--amber)';
@@ -726,32 +802,44 @@ function renderScoredResults(data) {
       `${data.scoring_reference_source || 'Unknown'} (${Number(data.scoring_reference_count || 0).toLocaleString()} tickers${updated})`;
   }
 
-  if (data.market_cap) {
-    document.getElementById('res-market-cap').textContent = formatMarketCap(data.market_cap);
-  }
+  document.getElementById('res-market-cap').textContent =
+    data.market_cap ? formatMarketCap(data.market_cap) : 'N/A';
 
   const perf1wEl = document.getElementById('res-perf-1w');
   const perfVal = data.technical_indicators?.perf_1w;
   if (perf1wEl && perfVal !== null && perfVal !== undefined) {
     perf1wEl.textContent = `${perfVal >= 0 ? '+' : ''}${perfVal.toFixed(1)}% (1w)`;
     perf1wEl.className = `perf-badge ${perfVal >= 0 ? '' : 'negative'}`;
+  } else if (perf1wEl) {
+    perf1wEl.textContent = 'N/A (1w)';
+    perf1wEl.className = 'perf-badge';
   }
 
   // 52W Range Meter
   const low52 = data.technical_indicators?.fifty_two_low;
   const high52 = data.technical_indicators?.fifty_two_high;
-  if (low52 && high52 && high52 > low52) {
+  if (Number.isFinite(low52) && Number.isFinite(high52) && high52 > low52) {
     document.getElementById('res-52low').textContent = `52W Low: $${low52.toFixed(2)}`;
     document.getElementById('res-52high').textContent = `52W High: $${high52.toFixed(2)}`;
     const pct = Math.min(100, Math.max(0, ((data.price - low52) / (high52 - low52)) * 100));
     document.getElementById('res-range-fill').style.width = `${pct}%`;
     document.getElementById('res-range-thumb').style.left = `${pct}%`;
+  } else {
+    document.getElementById('res-52low').textContent = '52W Low: N/A';
+    document.getElementById('res-52high').textContent = '52W High: N/A';
+    document.getElementById('res-range-fill').style.width = '0%';
+    document.getElementById('res-range-thumb').style.left = '0%';
   }
 
   // 2. Score Gauge & Stance
   const scoreVal = data.score;
   document.getElementById('res-score').textContent = scoreVal.toFixed(1);
-  document.getElementById('res-percentile-tag').textContent = `Top ${Math.max(1, (100 - data.universe_percentile).toFixed(1))}% Universe`;
+  document.getElementById('res-percentile-tag').textContent =
+    Number.isFinite(data.universe_percentile)
+      ? `Top ${Math.max(1, (100 - data.universe_percentile).toFixed(1))}% Universe`
+      : 'Universe percentile N/A';
+  document.getElementById('res-score-summary').textContent =
+    'Weighted cross-sectional factor score; not an empirical percentile of total scores.';
 
   const stanceBadge = document.getElementById('res-stance-badge');
   const stanceText = document.getElementById('res-stance-text');
@@ -771,18 +859,26 @@ function renderScoredResults(data) {
 
   // 3. OLS Statistical Forecast
   const fc = data.forecast;
-  if (fc && fc.expected_return !== null) {
+  if (fc && Number.isFinite(fc.expected_return)) {
     const retEl = document.getElementById('res-exp-return');
     retEl.textContent = `${fc.expected_return >= 0 ? '+' : ''}${fc.expected_return.toFixed(1)}%`;
     retEl.style.color = fc.expected_return >= 0 ? '#38bdf8' : '#f43f5e';
 
-    document.getElementById('res-exp-se').textContent = `±${fc.se.toFixed(1)}% SE`;
-    document.getElementById('res-ci-range').textContent = `[${fc.conf_lower >= 0 ? '+' : ''}${fc.conf_lower.toFixed(1)}%, ${fc.conf_upper >= 0 ? '+' : ''}${fc.conf_upper.toFixed(1)}%]`;
+    document.getElementById('res-exp-se').textContent =
+      Number.isFinite(fc.se) ? `±${fc.se.toFixed(1)}% fit SE` : 'Fit SE: N/A';
+    document.getElementById('res-ci-range').textContent =
+      Number.isFinite(fc.conf_lower) && Number.isFinite(fc.conf_upper)
+        ? `[${fc.conf_lower >= 0 ? '+' : ''}${fc.conf_lower.toFixed(1)}%, ${fc.conf_upper >= 0 ? '+' : ''}${fc.conf_upper.toFixed(1)}%]`
+        : '[N/A]';
 
     // CI Visual Span (map from -50% to +50% range to 0% - 100%)
     const minRange = -50, maxRange = 50, spanRange = maxRange - minRange;
-    const leftPct = Math.min(100, Math.max(0, ((fc.conf_lower - minRange) / spanRange) * 100));
-    const rightPct = Math.min(100, Math.max(0, ((fc.conf_upper - minRange) / spanRange) * 100));
+    const leftPct = Number.isFinite(fc.conf_lower)
+      ? Math.min(100, Math.max(0, ((fc.conf_lower - minRange) / spanRange) * 100))
+      : 0;
+    const rightPct = Number.isFinite(fc.conf_upper)
+      ? Math.min(100, Math.max(0, ((fc.conf_upper - minRange) / spanRange) * 100))
+      : 0;
     const pointPct = Math.min(100, Math.max(0, ((fc.expected_return - minRange) / spanRange) * 100));
 
     const ciSpan = document.getElementById('res-ci-span');
@@ -796,13 +892,18 @@ function renderScoredResults(data) {
     }
 
     // Win Probability
-    document.getElementById('res-prob-val').textContent = `${fc.prob_positive.toFixed(1)}%`;
-    document.getElementById('res-prob-fill').style.width = `${fc.prob_positive}%`;
+    document.getElementById('res-prob-val').textContent =
+      Number.isFinite(fc.prob_positive) ? `${fc.prob_positive.toFixed(1)}%` : 'N/A';
+    document.getElementById('res-prob-fill').style.width =
+      Number.isFinite(fc.prob_positive) ? `${fc.prob_positive}%` : '0%';
   } else {
     document.getElementById('res-exp-return').textContent = 'N/A';
+    document.getElementById('res-exp-se').textContent = 'Fit SE: N/A';
     document.getElementById('res-ci-range').textContent = '[N/A]';
     document.getElementById('res-prob-val').textContent = '--%';
     document.getElementById('res-prob-fill').style.width = '0%';
+    document.getElementById('res-ci-span').style.width = '0%';
+    document.getElementById('res-ci-point').style.left = '0%';
   }
 
   // 4. Balance Sheet & Solvency Flag (Non-Punitive)
@@ -829,9 +930,12 @@ function renderScoredResults(data) {
     } else if (lev.severity === 'caution') {
       levStatusBox.style.borderLeftColor = 'var(--amber)';
       levIcon.textContent = '⚠️';
-    } else {
+    } else if (lev.severity === 'warning') {
       levStatusBox.style.borderLeftColor = 'var(--rose)';
       levIcon.textContent = '🚨';
+    } else {
+      levStatusBox.style.borderLeftColor = 'var(--text-muted)';
+      levIcon.textContent = 'ℹ️';
     }
   }
 
@@ -868,10 +972,10 @@ function renderScoredResults(data) {
     cleanCard.className = 'footnote-card';
     cleanCard.style.borderLeftColor = 'var(--emerald)';
     cleanCard.innerHTML = `
-      <span class="fn-icon">✅</span>
+      <span class="fn-icon">ℹ️</span>
       <div class="fn-content">
-        <span class="fn-heading">Data Integrity Verified</span>
-        <p class="fn-msg">All primary technical, momentum, and fundamental metrics are available. 100% standard baseline weights applied without omissions.</p>
+        <span class="fn-heading">No integrity notes returned</span>
+        <p class="fn-msg">This scoring response did not include data-integrity notes. Check field availability and omitted factors before relying on the result.</p>
       </div>
     `;
     fnList.appendChild(cleanCard);
@@ -920,7 +1024,7 @@ function renderScoredResults(data) {
       multContainer.appendChild(pill);
     });
   } else {
-    multContainer.innerHTML = '<span style="font-size: 11px; color: var(--text-dim);">Neutral multiplier (1.00x). No penalty or bonus triggered.</span>';
+    multContainer.innerHTML = '<span style="font-size: 11px; color: var(--text-dim);">No active multiplier details were returned.</span>';
   }
 
   // 7. Key Technical & Fundamental Metrics
@@ -934,8 +1038,11 @@ function renderScoredResults(data) {
 
     const rsiEl = document.getElementById('m-rsi');
     const rsiStance = document.getElementById('m-rsi-stance');
-    rsiEl.textContent = ind.rsi !== null ? ind.rsi.toFixed(1) : 'N/A';
-    if (ind.rsi > 70) {
+    rsiEl.textContent = Number.isFinite(ind.rsi) ? ind.rsi.toFixed(1) : 'N/A';
+    if (!Number.isFinite(ind.rsi)) {
+      rsiStance.textContent = 'Unavailable';
+      rsiStance.style.color = 'var(--text-muted)';
+    } else if (ind.rsi > 70) {
       rsiStance.textContent = 'Overbought (>70)';
       rsiStance.style.color = 'var(--rose)';
     } else if (ind.rsi < 30) {
@@ -948,7 +1055,7 @@ function renderScoredResults(data) {
 
     document.getElementById('m-vol').textContent = ind.annualized_vol !== null ? `${ind.annualized_vol.toFixed(1)}%` : 'N/A';
     document.getElementById('m-beta').textContent = ind.beta !== null ? `${ind.beta.toFixed(2)}` : 'N/A';
-    document.getElementById('m-pe').textContent = ind.pe_ratio !== null ? `${ind.pe_ratio.toFixed(1)}x` : 'N/A (Loss)';
+    document.getElementById('m-pe').textContent = ind.pe_ratio !== null ? `${ind.pe_ratio.toFixed(1)}x` : 'N/A';
     document.getElementById('m-peg').textContent = ind.peg_ratio !== null ? `${ind.peg_ratio.toFixed(2)}` : 'N/A';
     document.getElementById('m-mom1y').textContent = ind.momentum_1y !== null ? `${ind.momentum_1y >= 0 ? '+' : ''}${ind.momentum_1y.toFixed(1)}%` : 'N/A (<1y)';
   }
@@ -1039,7 +1146,7 @@ async function runUniverseScan(refresh = false, existingRequestId = null) {
           data.price_data_as_of
             ? `Latest daily price bar ${new Date(data.price_data_as_of).toLocaleString()}`
             : '',
-          '1-year OLS forecast uses neutral defaults where live fundamental data is unavailable.',
+          'OLS columns are unvalidated proxies from stored model predictions; missing inputs produce N/A.',
           data.failures && data.failures.length
             ? `Examples unavailable: ${data.failures.slice(0, 5).map(failure => `${failure.ticker} (${failure.error})`).join('; ')}`
             : '',
@@ -1098,7 +1205,9 @@ async function runUniverseScan(refresh = false, existingRequestId = null) {
           }
           if (index === 7) cell.className = 'scan-score';
           if (index === 8) {
-            cell.style.color = item.expected_return >= 0 ? '#38bdf8' : '#f43f5e';
+            cell.style.color = Number.isFinite(item.expected_return)
+              ? item.expected_return >= 0 ? '#38bdf8' : '#f43f5e'
+              : 'var(--text-muted)';
             cell.style.fontFamily = 'var(--font-mono)';
             cell.style.fontWeight = '700';
           }
@@ -1174,8 +1283,8 @@ async function runCompare() {
           </div>
           <div class="comp-stats-list">
             <div class="comp-stat-row"><span>Sector</span><strong>${item.sector}</strong></div>
-            <div class="comp-stat-row"><span>Exp. 1y Return</span><strong style="color: ${item.forecast?.expected_return >= 0 ? '#38bdf8' : '#f43f5e'}; font-family: var(--font-mono);">${item.forecast?.expected_return !== null ? (item.forecast?.expected_return >= 0 ? '+' : '') + item.forecast?.expected_return.toFixed(1) + '%' : 'N/A'}</strong></div>
-            <div class="comp-stat-row"><span>RSI (14)</span><strong style="font-family: var(--font-mono);">${item.technical_indicators?.rsi ? item.technical_indicators.rsi.toFixed(1) : 'N/A'}</strong></div>
+            <div class="comp-stat-row"><span>1y OLS proxy</span><strong style="color: ${Number.isFinite(item.forecast?.expected_return) ? item.forecast.expected_return >= 0 ? '#38bdf8' : '#f43f5e' : 'var(--text-muted)'}; font-family: var(--font-mono);">${Number.isFinite(item.forecast?.expected_return) ? `${item.forecast.expected_return >= 0 ? '+' : ''}${item.forecast.expected_return.toFixed(1)}%` : 'N/A'}</strong></div>
+            <div class="comp-stat-row"><span>RSI (14)</span><strong style="font-family: var(--font-mono);">${Number.isFinite(item.technical_indicators?.rsi) ? item.technical_indicators.rsi.toFixed(1) : 'N/A'}</strong></div>
             <div class="comp-stat-row"><span>Debt/Equity</span><strong style="font-family: var(--font-mono);">${item.leverage_flag?.value_str}</strong></div>
             <div class="comp-stat-row"><span>P/E Ratio</span><strong style="font-family: var(--font-mono);">${item.technical_indicators?.pe_ratio ? item.technical_indicators.pe_ratio.toFixed(1) + 'x' : 'N/A'}</strong></div>
           </div>
@@ -1210,7 +1319,9 @@ function formatRawValue(key, val) {
     return `${val.toFixed(1)}x`;
   }
   if (key.includes('proximity')) {
-    return val === 0 ? '0.00 (At MA)' : `${val > 0 ? '+' : ''}${val.toFixed(3)}`;
+    return val === 0
+      ? 'No >15% extension penalty'
+      : `${(15 - val * 100).toFixed(1)}% above MA`;
   }
   return typeof val === 'number' ? val.toFixed(2) : val;
 }

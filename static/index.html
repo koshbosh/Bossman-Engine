@@ -31,10 +31,10 @@
         <div class="pulse-dot" id="regime-pulse"></div>
         <div class="regime-info">
           <div class="regime-top-row">
-            <span class="regime-label" id="regime-name">Analyzing Market Regime...</span>
-            <span class="macro-metric-badge" id="regime-breadth-badge">Breadth: --%</span>
-            <span class="macro-metric-badge" id="regime-rsp-badge">RSP/SPY: --</span>
-            <span class="macro-metric-badge" id="regime-vix-badge">VIX: --</span>
+            <span class="regime-label" id="regime-name">Waiting for fresh market data</span>
+            <span class="macro-metric-badge" id="regime-breadth-badge">Breadth: N/A</span>
+            <span class="macro-metric-badge" id="regime-rsp-badge">RSP/SPY: N/A</span>
+            <span class="macro-metric-badge" id="regime-vix-badge">VIX: N/A</span>
           </div>
           <span class="regime-sub" id="regime-sub">SPY vs 50d / 200d MA</span>
         </div>
@@ -65,6 +65,7 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M3.6 9h16.8M3.6 15h16.8M12 3c2.4 2.4 3.6 5.4 3.6 9s-1.2 6.6-3.6 9c-2.4-2.4-3.6-5.4-3.6-9S9.6 5.4 12 3z"></path></svg>
           Industry Explorer
         </button>
+        <a class="nav-tab" href="/research.html">Research Desk ↗</a>
       </nav>
     </div>
   </header>
@@ -138,8 +139,8 @@
       <!-- Loading State Overlay -->
       <div id="loading-state" class="loading-container glass-panel hidden">
         <div class="spinner"></div>
-        <div class="loading-text" id="loading-text">Fetching live data & computing multi-factor scores for <span id="loading-ticker">...</span></div>
-        <div class="loading-sub">Running MA proximity, RSI, volatility, baseline percentile rankings & OLS inference</div>
+        <div class="loading-text" id="loading-text">Refreshing the scoring universe and fetching data for <span id="loading-ticker">...</span></div>
+        <div class="loading-sub">Scores remain unavailable until current prices and a live cross-sectional reference are validated.</div>
       </div>
 
       <!-- Main Results Display Panel -->
@@ -150,28 +151,28 @@
           <div class="hero-left">
             <div class="ticker-badge-row">
               <h1 class="ticker-symbol" id="res-ticker">PLTR</h1>
-              <span class="company-name" id="res-name">Palantir Technologies Inc.</span>
-              <span class="sector-pill" id="res-sector">Technology</span>
-              <span class="industry-pill" id="res-industry">Software - Infrastructure</span>
+              <span class="company-name" id="res-name">Awaiting live market data</span>
+              <span class="sector-pill" id="res-sector">N/A</span>
+              <span class="industry-pill" id="res-industry">N/A</span>
             </div>
             <div class="meta-stats-row">
-              <span class="meta-item">Market Cap: <strong id="res-market-cap">$185.4B</strong></span>
+              <span class="meta-item">Market Cap: <strong id="res-market-cap">N/A</strong></span>
               <span class="meta-divider">•</span>
               <span class="meta-item">Profile: <strong id="res-profile">Dip Hunter</strong></span>
               <span class="meta-divider">•</span>
-              <span class="meta-item">Scoring Reference: <strong id="res-scoring-reference">Historical baseline</strong></span>
+              <span class="meta-item">Scoring Reference: <strong id="res-scoring-reference">Waiting for live scan</strong></span>
             </div>
           </div>
           <div class="hero-right">
             <div class="price-display">
-              <span class="live-price" id="res-price">$0.00</span>
-              <span class="perf-badge" id="res-perf-1w">+0.0% (1w)</span>
+              <span class="live-price" id="res-price">N/A</span>
+              <span class="perf-badge" id="res-perf-1w">N/A (1w)</span>
             </div>
-            <span class="price-as-of" id="res-price-as-of">Daily data as of --</span>
+            <span class="price-as-of" id="res-price-as-of">Daily data date unavailable</span>
             <div class="range-meter-container">
               <div class="range-labels">
-                <span id="res-52low">52W Low: $0.00</span>
-                <span id="res-52high">52W High: $0.00</span>
+                <span id="res-52low">52W Low: N/A</span>
+                <span id="res-52high">52W High: N/A</span>
               </div>
               <div class="range-track">
                 <div class="range-fill" id="res-range-fill"></div>
@@ -188,7 +189,7 @@
           <div class="kpi-card glass-panel score-card">
             <div class="card-header">
               <span class="card-title">ENGINE RECOMMENDATION SCORE</span>
-              <span class="card-tag" id="res-percentile-tag">Top 5% Universe</span>
+              <span class="card-tag" id="res-percentile-tag">Universe percentile N/A</span>
             </div>
             
             <div class="score-gauge-wrapper">
@@ -203,31 +204,31 @@
             </div>
 
             <div class="stance-badge" id="res-stance-badge">
-              <span id="res-stance-text">Analyzing</span>
+              <span id="res-stance-text">Waiting for live scan</span>
             </div>
-            <p class="score-footnote" id="res-score-summary">Relative percentile ranking across market features.</p>
+            <p class="score-footnote" id="res-score-summary">Waiting for the live cross-sectional scoring reference.</p>
           </div>
 
           <!-- Card 2: OLS Return Forecast & Prediction Interval -->
           <div class="kpi-card glass-panel forecast-card">
             <div class="card-header">
-              <span class="card-title">OLS STATISTICAL FORECAST</span>
+              <span class="card-title">OLS PROXY (NOT VALIDATED)</span>
               <span class="card-tag model-tag">1-Year Horizon</span>
             </div>
 
             <div class="forecast-body">
               <div class="forecast-metric-group">
-                <span class="forecast-label">Expected 1-Year Forward Return</span>
+                <span class="forecast-label">Model-Implied 1-Year Return</span>
                 <div class="forecast-value-row">
                   <span class="forecast-number" id="res-exp-return">--%</span>
-                  <span class="forecast-se" id="res-exp-se">±0.0% SE</span>
+                  <span class="forecast-se" id="res-exp-se">Fit SE: N/A</span>
                 </div>
               </div>
 
-              <!-- 95% Confidence Interval Band -->
+              <!-- OLS fit interval; not a calibrated prediction interval. -->
               <div class="ci-band-wrapper">
                 <div class="ci-band-header">
-                  <span>95% Confidence Interval</span>
+                  <span>Proxy Fit Range (Not Calibrated)</span>
                   <strong id="res-ci-range">[--%, --%]</strong>
                 </div>
                 <div class="ci-visual-bar">
@@ -240,7 +241,7 @@
               <!-- Probability of Positive Return Bar -->
               <div class="prob-wrapper">
                 <div class="prob-header">
-                  <span>Win Probability (Return > 0%)</span>
+                  <span>Model-Implied Positive Proxy</span>
                   <strong id="res-prob-val">--%</strong>
                 </div>
                 <div class="prob-track">
@@ -254,7 +255,7 @@
           <div class="kpi-card glass-panel leverage-card">
             <div class="card-header">
               <span class="card-title">BALANCE SHEET & SOLVENCY FLAG</span>
-              <span class="badge-flag" id="res-de-badge">Evaluated</span>
+              <span class="badge-flag" id="res-de-badge">Awaiting data</span>
             </div>
 
             <div class="leverage-body">
@@ -264,16 +265,14 @@
                   <span class="lev-val" id="res-de-val">--</span>
                 </div>
                 <div class="lev-metric">
-                  <span class="lev-sub">Sector Benchmark</span>
+                  <span class="lev-sub">Sector Model Threshold</span>
                   <span class="lev-val" id="res-de-benchmark">--</span>
                 </div>
               </div>
 
               <div class="leverage-status-box" id="res-de-status-box">
                 <div class="status-icon" id="res-de-icon">🛡️</div>
-                <p class="status-desc" id="res-de-desc">
-                  Debt-to-Equity is assessed strictly as an informational risk flag. In accordance with quantitative principles, it is NOT penalized via arbitrary score reduction.
-                </p>
+                <p class="status-desc" id="res-de-desc">Balance-sheet status appears after current company data is returned.</p>
               </div>
 
               <div class="leverage-rule-callout">
@@ -286,7 +285,7 @@
           <div class="kpi-card glass-panel sector-sub-card">
             <div class="card-header">
               <span class="card-title">SECTOR SUB-REGIME & ROTATION</span>
-              <span class="badge-flag" id="res-sector-badge">Scanning</span>
+              <span class="badge-flag" id="res-sector-badge">Awaiting data</span>
             </div>
 
             <div class="sector-sub-body">
@@ -295,7 +294,7 @@
                   <span class="sector-metric-sub">Benchmark Sector ETF</span>
                   <div class="sector-etf-val-row">
                     <span class="sector-etf-sym" id="res-sector-etf-sym">--</span>
-                    <span class="sector-etf-price" id="res-sector-etf-price">$0.00</span>
+                    <span class="sector-etf-price" id="res-sector-etf-price">N/A</span>
                   </div>
                 </div>
                 <div class="sector-metric-col">
@@ -308,9 +307,7 @@
                 <div class="status-icon" id="res-sector-icon">🎯</div>
                 <div class="status-content">
                   <span class="sector-effect-tag" id="res-sector-effect-tag">--</span>
-                  <p class="status-desc" id="res-sector-desc">
-                    Sector rotation impact is dynamically calibrated based on ETF distance from 50MA.
-                  </p>
+                  <p class="status-desc" id="res-sector-desc">Current sector ETF data will be shown after a validated market scan.</p>
                 </div>
               </div>
 
@@ -368,7 +365,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
               <span>MODEL FOOTNOTES & DATA INTEGRITY LOG</span>
             </div>
-            <span class="fn-badge" id="fn-count-badge">0 Footnotes</span>
+            <span class="fn-badge" id="fn-count-badge">Awaiting live score</span>
           </div>
           <div class="footnotes-list" id="footnotes-list">
             <!-- Dynamically injected footnotes -->
@@ -406,7 +403,7 @@
             <div class="multipliers-section">
               <h4>Active Rules, Multipliers & Bonuses</h4>
               <div class="multipliers-pill-container" id="multipliers-container">
-                <!-- Dynamically populated multipliers -->
+                Awaiting live score
               </div>
             </div>
           </div>
@@ -472,7 +469,7 @@
       <div class="scanner-header-card glass-panel">
         <div class="scanner-title-group">
           <h2>Market Universe Automated Scanner</h2>
-          <p>Fresh daily-price and technical-factor rankings across public S&amp;P 500, Nasdaq-100, and Russell 2000 proxy constituents. The forecast is a separate model estimate.</p>
+          <p>Fresh daily-price and technical-factor rankings across public S&amp;P 500, Nasdaq-100, and Russell 2000 proxy constituents. The OLS column is an unvalidated proxy fit to stored model outputs.</p>
         </div>
         <div class="scanner-controls">
           <div class="scanner-profile-select">
@@ -494,7 +491,7 @@
 
       <div class="scan-status-card glass-panel">
         <div class="scan-status-heading">
-          <strong id="scan-status-message">A live market scan will start when you open this tab.</strong>
+          <strong id="scan-status-message">A fresh live market scan is required before company scores are available.</strong>
           <span id="scan-status-time"></span>
         </div>
         <div class="scan-progress-track">
@@ -518,7 +515,7 @@
                 <th>RSI (14)</th>
                 <th>P/E</th>
                 <th>Score</th>
-                <th>OLS 1-Year Forecast (%)</th>
+                <th>OLS Proxy Output (%)</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -576,7 +573,7 @@
 
       <div class="explorer-disclosure glass-panel">
         <strong>GICS classifications are currently available for the S&amp;P 500 list.</strong>
-        Sector and sub-industry labels come from the source’s GICS columns. Scores are available only for companies in the app’s existing precomputed baseline; missing scores are shown as unavailable.
+        Sector and sub-industry labels come from the source’s GICS columns. Scores use the latest completed live scanner reference; companies without enough current data are shown as unavailable.
       </div>
 
       <section class="explorer-step glass-panel" aria-labelledby="gics-sector-heading">
@@ -618,7 +615,7 @@
           <table class="scanner-table explorer-table">
             <thead>
               <tr>
-                <th>Baseline rank</th>
+                <th>Live rank</th>
                 <th>Ticker / Company</th>
                 <th>Index / GICS classification</th>
                 <th>Profile score</th>
@@ -654,7 +651,7 @@
         <button class="modal-close-btn" onclick="closeSectorModal(event)">&times;</button>
       </div>
       <p class="modal-sub">
-        Real-time tracking of the 11 GICS sector ETFs against their 50-day moving averages. Sectors below their 50MA represent unloved contrarian opportunity zones and award a score bonus; sectors overextended above their 50MA incur a rotation risk haircut.
+        Daily-price tracking of the 11 GICS sector ETFs against their 50-day moving averages. Sectors below their 50MA represent contrarian opportunity zones; sectors overextended above their 50MA incur a rotation risk haircut. Unavailable ETF data is not scored.
       </p>
       <div class="sector-radar-grid" id="sector-radar-grid">
         <!-- Dynamically rendered 11 sector ETF cards -->

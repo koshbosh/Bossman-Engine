@@ -219,7 +219,7 @@ RISK_LEVELS = {
     }
 }
 
-# Prevailing Sector-Specific P/E Benchmarks
+# Static sector P/E references; not recalculated from live constituent data.
 SECTOR_PE_BENCHMARKS = {
     "Information Technology": 31.4,
     "Semiconductors": 34.0,
@@ -252,7 +252,7 @@ SECTOR_SAFE_LIMITS = {
     "N/A": 0.08
 }
 
-# Sector D/E thresholds (as yfinance percentage, e.g. 150 = 1.5x) above which
+# Static sector D/E thresholds (as yfinance percentage, e.g. 150 = 1.5x) above which
 # the soft solvency penalty activates. Sectors like Utilities, REITs and
 # Financials carry structural leverage so their thresholds are set higher.
 # Recalibrated using Damodaran's Market D/E (adjusted for leases) medians * 1.5x.
@@ -273,25 +273,21 @@ SECTOR_DE_THRESHOLDS = {
 
 
 def normalize(series):
-    valid = series.dropna()
+    numeric = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    valid = numeric.dropna()
     if valid.empty:
-        return pd.Series(0.5, index=series.index, dtype=float)
+        return numeric
     if valid.max() == valid.min():
-        return pd.Series(0.5, index=series.index, dtype=float)
-    return series.rank(pct=True).fillna(0.5)
+        return numeric.where(numeric.isna(), 0.5)
+    return numeric.rank(pct=True)
 
 
 def calculate_ma_proximity(price, ma):
-    """
-    Two-sided moving average proximity penalty.
-    Penalizes stocks >15% ABOVE the MA (overextended) AND >15% BELOW the MA (severe downtrend).
-    """
+    """Return only the excess-overextension signal beyond 15% above an MA."""
     if pd.isna(ma) or ma <= 0:
         return 0.0
     pct_diff = (price - ma) / ma
-    if pct_diff > 0.15:
-        return -(pct_diff - 0.15)
-    return 0.0
+    return -(pct_diff - 0.15) if pct_diff > 0.15 else 0.0
 
 
 def risk_penalty(vol, limit):
@@ -556,8 +552,8 @@ def calculate_overextended_momentum_penalty(momentum_1mo, perf_1w):
     - 1-month momentum > 30% OR 1-week performance > 15%.
     """
     try:
-        m1 = float(momentum_1mo)
-        w1 = float(perf_1w)
+        m1 = float(momentum_1mo) if momentum_1mo is not None else np.nan
+        w1 = float(perf_1w) if perf_1w is not None else np.nan
     except (ValueError, TypeError):
         return 1.0
     if (not pd.isna(m1) and m1 > 0.40) or (not pd.isna(w1) and w1 > 0.10):
@@ -641,7 +637,9 @@ def get_sp500_tickers():
 
 def generate_recommendations(stocks_df, user_profile="Dip Hunter", top_n=10, pe_benchmarks=None):
     df = stocks_df.copy()
-    cfg = RISK_LEVELS.get(user_profile, RISK_LEVELS["Dip Hunter"])
+    if user_profile not in RISK_LEVELS:
+        raise ValueError(f"Unknown scoring profile: {user_profile}")
+    cfg = RISK_LEVELS[user_profile]
 
     # Fallback to static benchmarks if none provided (e.g. for historical backtests)
     if pe_benchmarks is None:
@@ -718,57 +716,83 @@ def generate_recommendations(stocks_df, user_profile="Dip Hunter", top_n=10, pe_
         else:
             w_ma50, w_3mo, w_ma200 = base_ma50_wt, base_3mo_wt, base_ma200_wt
 
-        benchmark = pe_benchmarks.get(row["sector"], 23.5)
+        benchmark = (
+            pe_benchmarks.get(row.get("sector"))
+            if row.get("sector") != "N/A" else None
+        )
 
-        risk_s = risk_penalty(row["annualized_vol"], cfg.get("vol_limit"))
-        value_s = calculate_value_score(row.get("pe_ratio", 20.0), benchmark)
-        
-        # Profile-specific feature direction (inversion for dip/bear signals)
-        if user_profile in ["Bear Market Shield", "Fundamental Bag"]:
-            m6_score = 1.0 - row.get("momentum_6mo_norm", 0.5)
-            m1_score = 1.0 - row.get("momentum_1mo_norm", 0.5)
-            ma50_score = 1.0 - row.get("ma50_proximity_norm", 0.5)
-            m3_score = row.get("momentum_3mo_norm", 0.5)
-            ma200_score = row.get("ma200_proximity_norm", 0.5)
-            m1y_score = row.get("momentum_1y_norm", 0.5)
-        elif user_profile == "Dip Hunter":
-            m3_score = row.get("momentum_3mo_norm", 0.5)
-            m6_score = row.get("momentum_6mo_norm", 0.5)
-            m1y_score = 1.0 - row.get("momentum_1y_norm", 0.5)       # Inverted rank for -6.70 t-stat
-            ma50_score = 1.0 - row.get("ma50_proximity_norm", 0.5)     # Inverted rank for -6.35 t-stat
-            ma200_score = 1.0 - row.get("ma200_proximity_norm", 0.5)    # Inverted rank for -4.29 t-stat
-            m1_score = row.get("momentum_1mo_norm", 0.5)
-        else:
-            m3_score = row.get("momentum_3mo_norm", 0.5)
-            m6_score = row.get("momentum_6mo_norm", 0.5)
-            m1_score = row.get("momentum_1mo_norm", 0.5)
-            m1y_score = row.get("momentum_1y_norm", 0.5)
-            ma50_score = row.get("ma50_proximity_norm", 0.5)
-            ma200_score = row.get("ma200_proximity_norm", 0.5)
+        def finite_value(value):
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            return number if np.isfinite(number) else None
 
+        def rank_score(feature, invert=False):
+            rank = finite_value(row.get(f"{feature}_norm"))
+            if rank is None:
+                return None
+            return 1.0 - rank if invert else rank
+
+        invert_6mo = user_profile in ["Bear Market Shield", "Fundamental Bag"]
+        invert_1mo = invert_6mo and True
+        invert_ma50 = invert_6mo or user_profile == "Dip Hunter"
+        invert_1y = user_profile == "Dip Hunter"
+        invert_ma200 = user_profile == "Dip Hunter"
+        components = [
+            (base_6mo_wt, rank_score("momentum_6mo", invert_6mo)),
+            (base_1mo_wt, rank_score("momentum_1mo", invert_1mo)),
+            (w_ma50, rank_score("ma50_proximity", invert_ma50)),
+            (w_3mo, rank_score("momentum_3mo")),
+            (w_ma200, rank_score("ma200_proximity", invert_ma200)),
+            (base_1y_wt, rank_score("momentum_1y", invert_1y)),
+        ]
+
+        volatility = finite_value(row.get("annualized_vol"))
+        if cfg["risk_weight"] > 0 and volatility is not None:
+            components.append((
+                cfg["risk_weight"],
+                risk_penalty(volatility, cfg.get("vol_limit")),
+            ))
+        pe_ratio = finite_value(row.get("pe_ratio"))
+        if (
+            cfg["value_weight"] > 0
+            and pe_ratio is not None
+            and pe_ratio > 0
+            and benchmark is not None
+            and benchmark > 0
+        ):
+            components.append((
+                cfg["value_weight"],
+                calculate_value_score(pe_ratio, benchmark),
+            ))
+
+        active_components = [
+            (weight, score)
+            for weight, score in components
+            if weight > 0 and score is not None
+        ]
+        active_weight = sum(weight for weight, _ in active_components)
         base_score = (
-            base_6mo_wt * m6_score +
-            base_1mo_wt * m1_score +
-            w_ma50 * ma50_score +
-            w_3mo * m3_score +
-            w_ma200 * ma200_score +
-            base_1y_wt * m1y_score +
-            cfg["risk_weight"] * risk_s +
-            cfg["value_weight"] * value_s
+            sum(weight * score for weight, score in active_components) / active_weight
+            if active_weight > 0 else np.nan
         )
 
         final_multiplier = 1.0
 
         # ── High Beta Bonus ───────────────────────────────────────────
-        if use_high_beta_bonus:
+        beta = finite_value(row.get("beta"))
+        if use_high_beta_bonus and beta is not None:
             final_multiplier *= calculate_high_beta_bonus(
-                row.get("beta", 1.0), max_bonus=high_beta_bonus_max
+                beta, max_bonus=high_beta_bonus_max
             )
 
         # ── MA50 Mean Deviation Bonus ─────────────────────────────────
-        if use_ma50_dev_bonus:
+        price = finite_value(row.get("price"))
+        ma_50 = finite_value(row.get("ma_50"))
+        if use_ma50_dev_bonus and price is not None and ma_50 is not None:
             final_multiplier *= calculate_ma50_deviation_bonus(
-                row.get("price", 0), row.get("ma_50", float("nan")),
+                price, ma_50,
                 max_bonus=ma50_dev_bonus_max, cutoff=ma50_dev_cutoff
             )
 
@@ -780,84 +804,113 @@ def generate_recommendations(stocks_df, user_profile="Dip Hunter", top_n=10, pe_
 
         if use_robustness:
             sector_limit = SECTOR_SAFE_LIMITS.get(row["sector"], 0.08)
+            perf_1w = finite_value(row.get("perf_1w"))
+            if beta is not None and perf_1w is not None:
+                safe_limit = sector_limit / max(0.5, beta)
+            else:
+                safe_limit = None
 
-            # FIX v2.1: Beta now TIGHTENS the speed limit, not loosens it.
-            # A high-beta stock should be flagged sooner for unusual weekly moves,
-            # not given more room. Clamped at 0.5 to prevent extreme tightening.
-            beta = max(0.5, row.get("beta", 1.0))
-            safe_limit = sector_limit / beta
-
-            if row.get("perf_1w", 0) > safe_limit:
-                excess = row["perf_1w"] - safe_limit
+            if safe_limit is not None and perf_1w > safe_limit:
+                excess = perf_1w - safe_limit
                 final_multiplier *= np.clip(1.0 - (excess * 2.5), 0.5, 1.0)
 
         # ── RSI > 65 overbought penalty — ALL profiles ─────────────────
-        final_multiplier *= calculate_rsi_overbought_penalty(row.get("rsi", 50))
+        rsi = finite_value(row.get("rsi"))
+        if rsi is not None:
+            final_multiplier *= calculate_rsi_overbought_penalty(rsi)
 
         # ── RSI < 30 falling knife penalty ─────────────────────────────
-        if use_rsi_falling_knife:
-            final_multiplier *= calculate_rsi_falling_knife_penalty(row.get("rsi", 50))
+        if use_rsi_falling_knife and rsi is not None:
+            final_multiplier *= calculate_rsi_falling_knife_penalty(rsi)
 
         # ── RSI 30..50 oversold bonus — active profiles only ───────────
-        if use_rsi_oversold_bonus:
-            final_multiplier *= calculate_rsi_oversold_bonus(row.get("rsi", 50), max_bonus=rsi_oversold_bonus_max)
+        if use_rsi_oversold_bonus and rsi is not None:
+            final_multiplier *= calculate_rsi_oversold_bonus(rsi, max_bonus=rsi_oversold_bonus_max)
 
         # ── P/E stretch penalty — Low / Low-Med only ───────────────────
-        if use_pe_stretch_penalty:
+        if use_pe_stretch_penalty and pe_ratio is not None and benchmark is not None:
             final_multiplier *= calculate_pe_stretch_penalty(
-                row.get("pe_ratio", 0), benchmark
+                pe_ratio, benchmark
             )
 
         # ── Below 200MA bonus — ALL profiles (profile-aware scaling) ───
-        if use_ma200_bonus:
+        ma_200 = finite_value(row.get("ma_200"))
+        momentum_1y = finite_value(row.get("momentum_1y"))
+        if (
+            use_ma200_bonus
+            and price is not None
+            and ma_200 is not None
+            and momentum_1y is not None
+        ):
             final_multiplier *= calculate_ma200_bonus(
-                row.get("price", 0), row.get("ma_200", float("nan")),
-                row.get("momentum_1y", 0.0),
+                price, ma_200, momentum_1y,
                 max_bonus=ma200_bonus_max, max_depth=ma200_bonus_max_depth
             )
 
         # ── Low P/E bonus — ALL profiles ──────────────────────────────
-        if use_low_pe_bonus:
-            final_multiplier *= calculate_low_pe_bonus(row.get("pe_ratio", 20.0))
+        if use_low_pe_bonus and pe_ratio is not None:
+            final_multiplier *= calculate_low_pe_bonus(pe_ratio)
 
         # ── PEG ratio bonus — ALL profiles ────────────────────────────
-        if use_peg_bonus:
-            final_multiplier *= calculate_peg_bonus(row.get("peg_ratio", 1.0))
+        peg_ratio = finite_value(row.get("peg_ratio"))
+        if use_peg_bonus and peg_ratio is not None:
+            final_multiplier *= calculate_peg_bonus(peg_ratio)
 
         # ── Overextended momentum penalty — ALL profiles ──────────────
         if use_overextended_penalty:
-            final_multiplier *= calculate_overextended_momentum_penalty(
-                row.get("momentum_1mo", 0), row.get("perf_1w", 0)
-            )
+            momentum_1mo = finite_value(row.get("momentum_1mo"))
+            perf_1w = finite_value(row.get("perf_1w"))
+            if momentum_1mo is not None or perf_1w is not None:
+                final_multiplier *= calculate_overextended_momentum_penalty(
+                    momentum_1mo, perf_1w
+                )
 
         # ── Momentum exhaustion filter — ALL profiles ─────────────────
-        if use_exhaustion_filter:
+        momentum_6mo = finite_value(row.get("momentum_6mo"))
+        momentum_1mo = finite_value(row.get("momentum_1mo"))
+        if (
+            use_exhaustion_filter
+            and momentum_6mo is not None
+            and momentum_1mo is not None
+        ):
             final_multiplier *= calculate_exhaustion_penalty(
-                row.get("momentum_6mo", 0), row.get("momentum_1mo", 0)
+                momentum_6mo, momentum_1mo
             )
 
         # ── Sector Rotation Outperformance Bonus — ALL profiles ────────
         if use_sector_bonus:
-            sec_3mo_val = sector_3mo.get(row["sector"], 0)
-            sec_6mo_val = sector_6mo.get(row["sector"], 0)
-            excess_3mo = max(0, row.get("momentum_3mo", 0) - sec_3mo_val)
-            excess_6mo = max(0, row.get("momentum_6mo", 0) - sec_6mo_val)
-            
-            # Dynamic scaling: 1% outperformance = 1% bonus, capped per profile
-            total_excess = excess_3mo + excess_6mo
-            sector_bonus_mult = 1.0 + min(max_sector_bonus - 1.0, total_excess)
-            final_multiplier *= sector_bonus_mult
+            excesses = []
+            momentum_3mo = finite_value(row.get("momentum_3mo"))
+            sec_3mo_val = finite_value(sector_3mo.get(row["sector"]))
+            if momentum_3mo is not None and sec_3mo_val is not None:
+                excesses.append(max(0, momentum_3mo - sec_3mo_val))
+            sec_6mo_val = finite_value(sector_6mo.get(row["sector"]))
+            if momentum_6mo is not None and sec_6mo_val is not None:
+                excesses.append(max(0, momentum_6mo - sec_6mo_val))
+            if excesses:
+                total_excess = sum(excesses)
+                sector_bonus_mult = 1.0 + min(max_sector_bonus - 1.0, total_excess)
+                final_multiplier *= sector_bonus_mult
 
         # ── Shorting Penalty ──────────────────────────────────────────
-        if use_short_penalty:
+        short_percent = finite_value(row.get("short_percent"))
+        if use_short_penalty and short_percent is not None:
             final_multiplier *= calculate_short_penalty(
-                row.get("short_percent", 0), short_penalty_severity
+                short_percent, short_penalty_severity
             )
 
         # ── Volume Surge Bonus ────────────────────────────────────────
-        if use_volume_surge:
+        current_volume = finite_value(row.get("current_volume"))
+        average_volume = finite_value(row.get("avg_volume"))
+        if (
+            use_volume_surge
+            and current_volume is not None
+            and average_volume is not None
+            and current_volume > 0
+            and average_volume > 0
+        ):
             final_multiplier *= calculate_volume_surge_bonus(
-                row.get("current_volume", 0), row.get("avg_volume", 0), volume_surge_max_bonus
+                current_volume, average_volume, volume_surge_max_bonus
             )
 
         scores.append(base_score * final_multiplier)

@@ -19,11 +19,23 @@ from datetime import datetime
 
 from engine_service import UniversalScoringEngine, apply_gics_classification
 from market_scanner import AutomatedMarketScanner
+
 from universe_explorer import (
     build_gics_sectors,
     build_gics_subindustries,
     get_gics_universe,
+    normalize_ticker as normalize_universe_ticker,
+)
+from research_service import (
+    ResearchConfigurationError,
+    ResearchSourceError,
+    answer_company_question,
+    consume_research_rate_limit,
+    get_research_status,
+    is_valid_research_access_token,
+    MAX_QUESTION_LENGTH,
     normalize_ticker,
+    requires_market_analysis,
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +51,18 @@ MARKET_SCANNER = AutomatedMarketScanner(ENGINE)
 TICKER_CACHE = {}
 CACHE_TTL = 900  # 15 minutes in seconds
 INDUSTRY_SCORE_CACHE = {}
+
+
+def has_live_scoring_reference():
+    reference_is_current = (
+        ENGINE.scoring_reference_source == "Live scanner universe"
+        and ENGINE.scoring_reference_df is not None
+        and not ENGINE.scoring_reference_df.empty
+        and ENGINE.scoring_reference_updated_at is not None
+    )
+    if not reference_is_current:
+        return False
+    return MARKET_SCANNER.has_fresh_scoring_reference()
 
 
 class EngineRequestHandler(BaseHTTPRequestHandler):
@@ -62,10 +86,104 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/research":
+            return self.send_error_json("Not Found", status=404)
+
+        content_length = self.headers.get("Content-Length", "")
+        try:
+            length = int(content_length)
+        except ValueError:
+            return self.send_error_json("A valid Content-Length header is required.")
+        if length < 1 or length > 8192:
+            return self.send_error_json("Research request must be between 1 and 8192 bytes.")
+
+        try:
+            payload = json.loads(self.rfile.read(length))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return self.send_error_json("Request body must be valid JSON.")
+        if not isinstance(payload, dict):
+            return self.send_error_json("Request body must be a JSON object.")
+
+        try:
+            ticker = normalize_ticker(payload.get("ticker", ""))
+            question = payload.get("question", "")
+            status = get_research_status()
+            if not status["ready"]:
+                missing = ", ".join(status["missing"])
+                raise ResearchConfigurationError(
+                    f"Research is not configured. Set {missing} on the server."
+                )
+            if not consume_research_rate_limit(self.client_address[0]):
+                return self.send_error_json(
+                    "Research request limit reached. Try again after the hourly limit resets.",
+                    status=429,
+                )
+            authorization = self.headers.get("Authorization", "")
+            token = authorization.removeprefix("Bearer ").strip()
+            if not is_valid_research_access_token(token):
+                return self.send_error_json(
+                    "A valid research access token is required for this request.",
+                    status=401,
+                )
+            if not isinstance(question, str) or not question.strip():
+                return self.send_error_json("Enter a research question.")
+            if len(question) > MAX_QUESTION_LENGTH:
+                return self.send_error_json(
+                    f"Research questions must be {MAX_QUESTION_LENGTH:,} characters or fewer."
+                )
+            market_analysis = None
+            market_error = None
+            if requires_market_analysis(question):
+                try:
+                    now = time.time()
+                    cached = TICKER_CACHE.get(ticker)
+                    if cached and (now - cached["timestamp"]) < CACHE_TTL:
+                        ticker_data = cached["data"]
+                    else:
+                        ticker_data = ENGINE.fetch_ticker_data(ticker)
+                        TICKER_CACHE[ticker] = {
+                            "data": ticker_data,
+                            "timestamp": now,
+                        }
+                    market_analysis = ENGINE.analyze_entry_zones(
+                        ticker_data,
+                        profile_name="All-Weather Core",
+                        simulations=2500,
+                    )
+                    market_analysis["price_as_of"] = ticker_data.get("price_as_of")
+                except Exception as error:
+                    sys.stderr.write(
+                        f"[Research] Market/entry analysis unavailable for {ticker}: {error}\n"
+                    )
+                    market_error = (
+                        "The market data provider or entry-zone calculation was unavailable."
+                    )
+            result = answer_company_question(
+                ticker,
+                question,
+                market_analysis=market_analysis,
+                market_error=market_error,
+            )
+            return self.send_json(result)
+        except ValueError as error:
+            return self.send_error_json(str(error))
+        except ResearchConfigurationError as error:
+            return self.send_error_json(str(error), status=503)
+        except ResearchSourceError as error:
+            return self.send_error_json(str(error), status=502)
+        except Exception as error:
+            sys.stderr.write(f"[Research] Unexpected research error: {error}\n")
+            return self.send_error_json("Research failed unexpectedly. Check the server log.", status=500)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
+
+        if path == "/api/research/status":
+            return self.send_json(get_research_status())
 
         # ── API: Score Single Ticker ──────────────────────────────────
         if path == "/api/score":
@@ -77,6 +195,14 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
 
             if not ticker:
                 return self.send_error_json("Missing 'ticker' parameter.")
+            if profile not in RISK_LEVELS:
+                return self.send_error_json(f"Unknown scoring profile: {profile}")
+            if not has_live_scoring_reference():
+                return self.send_error_json(
+                    "A completed live universe scan is required before scoring. "
+                    "Refresh the market scan and try again.",
+                    status=503,
+                )
 
             try:
                 # Check cache for raw ticker metrics
@@ -93,11 +219,15 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     TICKER_CACHE[ticker] = {"data": ticker_data, "timestamp": now}
 
                 ticker_data = apply_gics_classification(
-                    ticker_data, gics_sector, gics_subindustry
+                    ticker_data,
+                    gics_sector,
+                    gics_subindustry,
                 )
                 result = ENGINE.score_ticker(ticker_data, profile_name=profile)
                 result["market_regime"] = ENGINE.market_regime
                 return self.send_json(result)
+            except ValueError as error:
+                return self.send_error_json(str(error), status=422)
             except Exception as e:
                 return self.send_error_json(f"Failed to score '{ticker}': {str(e)}", status=500)
 
@@ -111,6 +241,11 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             if profile != "Dip Hunter":
                 return self.send_error_json(
                     "Historical entry analysis is currently available for Dip Hunter only."
+                )
+            if not has_live_scoring_reference():
+                return self.send_error_json(
+                    "A completed live universe scan is required before entry analysis.",
+                    status=503,
                 )
 
             try:
@@ -137,6 +272,13 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             tickers_list = [t.strip().upper() for t in tickers_raw.split(",") if t.strip()]
             if not tickers_list:
                 return self.send_error_json("Please provide at least one ticker in 'tickers'.")
+            if profile not in RISK_LEVELS:
+                return self.send_error_json(f"Unknown scoring profile: {profile}")
+            if not has_live_scoring_reference():
+                return self.send_error_json(
+                    "A completed live universe scan is required before comparison.",
+                    status=503,
+                )
 
             results = []
             now = time.time()
@@ -158,8 +300,6 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
 
         # ── API: Universe Scan Leaderboard ────────────────────────────
         elif path == "/api/scan":
-            from recommender import RISK_LEVELS
-
             profile = params.get("profile", ["Dip Hunter"])[0].strip()
             if profile not in RISK_LEVELS:
                 return self.send_error_json(f"Unknown scoring profile: {profile}")
@@ -173,8 +313,6 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
 
         # ── API: Free Public-Source Industry Explorer ─────────────────
         elif path == "/api/industry-explorer":
-            from recommender import RISK_LEVELS
-
             profile = params.get("profile", ["Dip Hunter"])[0].strip()
             requested_sector = params.get("sector", [""])[0]
             requested_subindustry = params.get("subindustry", [""])[0]
@@ -182,6 +320,11 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             force_refresh = params.get("refresh", [""])[0].lower() == "true"
             if profile not in RISK_LEVELS:
                 return self.send_error_json(f"Unknown scoring profile: {profile}")
+            if not has_live_scoring_reference():
+                return self.send_error_json(
+                    "A completed live universe scan is required before showing live company scores.",
+                    status=503,
+                )
 
             try:
                 universe = get_gics_universe(force_refresh=force_refresh)
@@ -211,12 +354,13 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                         "The selected GICS sub-industry is not available in this sector."
                     )
 
-                if profile not in INDUSTRY_SCORE_CACHE:
+                cache_key = (profile, ENGINE.scoring_reference_updated_at)
+                if cache_key not in INDUSTRY_SCORE_CACHE:
                     score_rows = ENGINE.scan_universe(
                         profile_name=profile,
-                        top_n=len(ENGINE.baseline_df),
+                        top_n=len(ENGINE.scoring_reference_df),
                     )
-                    INDUSTRY_SCORE_CACHE[profile] = {
+                    INDUSTRY_SCORE_CACHE[cache_key] = {
                         normalize_ticker(row["ticker"]): {
                             "score": row["score"],
                             "rank": row["rank"],
@@ -224,13 +368,13 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                         for row in score_rows
                         if normalize_ticker(row.get("ticker"))
                     }
-                scores = INDUSTRY_SCORE_CACHE[profile]
+                scores = INDUSTRY_SCORE_CACHE[cache_key]
                 if company_search:
-                    from universe_explorer import search_gics_companies
+                        from universe_explorer import search_gics_companies
 
-                    matching_companies = search_gics_companies(
-                        gics_companies, company_search
-                    )
+                        matching_companies = search_gics_companies(
+                            gics_companies, company_search
+                        )
                 else:
                     matching_companies = [
                         company for company in gics_companies
@@ -270,7 +414,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     "score_company_count": sum(
                         company["ticker"] in scores for company in selected_companies
                     ),
-                    "score_baseline_source": os.path.basename(ENGINE.baseline_csv_path),
+                    "score_baseline_source": ENGINE.scoring_reference_source,
                     "sources": universe["sources"],
                     "fetched_at": universe["fetched_at"],
                     "refresh_error": universe.get("refresh_error"),

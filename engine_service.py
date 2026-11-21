@@ -13,7 +13,7 @@ Key Quantitative Features:
    explicit balance-sheet risk flag/badge rather than an arbitrary score penalty.
 3. Transparent Footnotes: Full accounting of omitted factors, rebased weights,
    and data limitations.
-4. OLS 1-Year Return Prediction with 95% Confidence Intervals.
+4. OLS proxy trained against stored model predictions (not realized returns).
 5. Cross-Sectional Ranking against baseline universe.
 ======================================================================
 """
@@ -28,6 +28,7 @@ import yfinance as yf
 from yahooquery import Ticker as YQTicker
 
 from entry_zones import build_entry_zone_analysis
+from market_data import MAX_PRICE_AGE_DAYS, prepare_daily_price_history
 from recommender import (
     RISK_LEVELS,
     SECTOR_PE_BENCHMARKS,
@@ -95,12 +96,25 @@ def apply_gics_classification(ticker_data, sector, industry):
 
 
 def calculate_beta(stock_returns, market_returns):
+    if stock_returns is None or market_returns is None:
+        return None
     common = stock_returns.index.intersection(market_returns.index)
     if len(common) < 60:
-        return 1.0
+        return None
     s, m = stock_returns.loc[common], market_returns.loc[common]
     var = np.var(m)
-    return float(np.cov(s, m)[0][1] / var) if var != 0 else 1.0
+    if not np.isfinite(var) or var <= 0:
+        return None
+    beta = float(np.cov(s, m, ddof=0)[0][1] / var)
+    return beta if np.isfinite(beta) else None
+
+
+def _finite_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
 
 
 class UniversalScoringEngine:
@@ -131,6 +145,7 @@ class UniversalScoringEngine:
 
     def load_baseline(self):
         """Loads cached universe baseline and trains OLS model."""
+        self.ols_model = None
         if os.path.exists(self.baseline_csv_path):
             self.baseline_df = pd.read_csv(self.baseline_csv_path)
             print(f"[Engine] Loaded baseline universe with {len(self.baseline_df)} stocks.")
@@ -138,24 +153,57 @@ class UniversalScoringEngine:
             print("[Engine] Warning: Baseline CSV not found. Initializing empty.")
             self.baseline_df = pd.DataFrame()
 
+        for feature, average in (
+            ("ma50_proximity", "ma_50"),
+            ("ma200_proximity", "ma_200"),
+        ):
+            if not {"price", average}.issubset(self.baseline_df.columns):
+                continue
+            prices = pd.to_numeric(self.baseline_df["price"], errors="coerce")
+            averages = pd.to_numeric(self.baseline_df[average], errors="coerce")
+            valid = np.isfinite(prices) & np.isfinite(averages) & averages.gt(0) & prices.gt(0)
+            self.baseline_df[feature] = np.nan
+            self.baseline_df.loc[valid, feature] = [
+                calculate_ma_proximity(price, moving_average)
+                for price, moving_average in zip(
+                    prices.loc[valid], averages.loc[valid]
+                )
+            ]
+
         self.scoring_reference_df = self.baseline_df
         self.scoring_reference_source = os.path.basename(self.baseline_csv_path)
 
         # Train OLS model on baseline
         if not self.baseline_df.empty and "pred_return" in self.baseline_df.columns:
-            clean_df = self.baseline_df[self.features_list + ["pred_return"]].dropna()
-            self.ols_model = NumPyOLS()
-            self.ols_model.fit(
-                clean_df[self.features_list].values,
-                clean_df["pred_return"].values,
-                self.features_list,
-            )
-            print(f"[Engine] OLS model trained (R²: {self.ols_model.r2:.3f}).")
+            model_columns = self.features_list + ["pred_return"]
+            if set(model_columns).issubset(self.baseline_df.columns):
+                clean_df = self.baseline_df[model_columns].apply(
+                    pd.to_numeric, errors="coerce"
+                ).dropna()
+                finite_rows = np.isfinite(clean_df.to_numpy(dtype=float)).all(axis=1)
+                clean_df = clean_df.loc[finite_rows]
+                if len(clean_df) >= len(self.features_list) + 2:
+                    self.ols_model = NumPyOLS()
+                    self.ols_model.fit(
+                        clean_df[self.features_list].values,
+                        clean_df["pred_return"].values,
+                        self.features_list,
+                    )
+                    print(
+                        "[Engine] OLS proxy fit to stored baseline predictions "
+                        f"(R²: {self.ols_model.r2:.3f}; not independently validated)."
+                    )
 
         # Compute sector medians for sector rotation outperformance bonus
-        if not self.baseline_df.empty and "momentum_3mo" in self.baseline_df.columns:
-            self.sector_3mo_medians = self.baseline_df.groupby("sector")["momentum_3mo"].median().to_dict()
-            self.sector_6mo_medians = self.baseline_df.groupby("sector")["momentum_6mo"].median().to_dict()
+        if not self.baseline_df.empty and "sector" in self.baseline_df.columns:
+            self.sector_3mo_medians = (
+                self.baseline_df.groupby("sector")["momentum_3mo"].median().to_dict()
+                if "momentum_3mo" in self.baseline_df.columns else {}
+            )
+            self.sector_6mo_medians = (
+                self.baseline_df.groupby("sector")["momentum_6mo"].median().to_dict()
+                if "momentum_6mo" in self.baseline_df.columns else {}
+            )
         else:
             self.sector_3mo_medians = {}
             self.sector_6mo_medians = {}
@@ -172,22 +220,52 @@ class UniversalScoringEngine:
             )
             if downloaded.empty:
                 raise RuntimeError("Yahoo Finance returned no macro market history.")
+            if "Close" not in downloaded.columns:
+                raise RuntimeError("Yahoo Finance returned no macro closing-price field.")
             m_data = downloaded["Close"]
-            if m_data.empty:
+            if not isinstance(m_data, pd.DataFrame) or m_data.empty:
                 raise RuntimeError("Yahoo Finance returned no macro closing prices.")
+            m_data = m_data.apply(pd.to_numeric, errors="coerce")
+            m_data = m_data.replace([np.inf, -np.inf], np.nan).sort_index()
+            m_data = m_data.where(m_data > 0)
+            core_symbols = ["SPY", "RSP", "^VIX"]
+            missing = [symbol for symbol in core_symbols if symbol not in m_data.columns]
+            if missing:
+                raise RuntimeError(
+                    f"Yahoo Finance omitted required macro series: {', '.join(missing)}."
+                )
+            core = m_data[core_symbols].where(m_data[core_symbols] > 0).dropna()
+            if len(core) < 200:
+                raise RuntimeError(
+                    f"Yahoo Finance returned only {len(core)} aligned macro sessions; "
+                    "at least 200 are required."
+                )
+            as_of = pd.Timestamp(core.index[-1])
+            if as_of.tzinfo is None:
+                as_of = as_of.tz_localize("UTC")
+            else:
+                as_of = as_of.tz_convert("UTC")
+            now = pd.Timestamp.now(tz="UTC")
+            age_days = (now.normalize() - as_of.normalize()).days
+            if age_days < -1:
+                raise RuntimeError("Yahoo Finance macro data is dated in the future.")
+            if age_days > MAX_PRICE_AGE_DAYS:
+                raise RuntimeError(
+                    f"Yahoo Finance macro data is stale: {as_of.date().isoformat()} "
+                    f"({age_days} days old)."
+                )
         except Exception as error:
             self.macro_data_error = str(error)
             print(f"[Engine] Error refreshing macro assets: {error}")
+            self._macro_close_data = pd.DataFrame()
+            self.macro_data_as_of = None
+            self.spy_history = None
             return False
 
         self._macro_close_data = m_data
         self.macro_data_error = None
-        if "SPY" in m_data.columns:
-            spy_history = m_data["SPY"].dropna()
-            if not spy_history.empty:
-                self.spy_history = spy_history
-        dates = pd.to_datetime(m_data.index, errors="coerce").dropna()
-        self.macro_data_as_of = dates.max().isoformat() if not dates.empty else None
+        self.spy_history = m_data["SPY"].dropna()
+        self.macro_data_as_of = as_of.isoformat()
         return True
 
     def update_live_market_context(self, feature_frame):
@@ -222,76 +300,126 @@ class UniversalScoringEngine:
         if refresh_macro:
             self.refresh_macro_data()
 
-        # 1. Breadth from the latest completed scan, or the startup baseline.
+        # 1. Breadth only from the latest completed live scan.
         breadth_source_frame = (
-            breadth_frame if breadth_frame is not None else self.baseline_df
+            breadth_frame if breadth_frame is not None else pd.DataFrame()
         )
         clean_b = pd.DataFrame()
         clean_b_200 = pd.DataFrame()
+        breadth_50 = None
+        breadth_200 = None
         if (
             not breadth_source_frame.empty
             and "price" in breadth_source_frame.columns
             and "ma_50" in breadth_source_frame.columns
         ):
-            clean_b = breadth_source_frame.dropna(subset=["price", "ma_50"])
-            breadth_50 = float((clean_b["price"] > clean_b["ma_50"]).mean() * 100) if len(clean_b) > 0 else 50.0
-            if "ma_200" in breadth_source_frame.columns:
-                clean_b_200 = breadth_source_frame.dropna(subset=["price", "ma_200"])
-            breadth_200 = (
-                float((clean_b_200["price"] > clean_b_200["ma_200"]).mean() * 100)
-                if not clean_b_200.empty else 50.0
+            prices = pd.to_numeric(breadth_source_frame["price"], errors="coerce")
+            ma_50 = pd.to_numeric(breadth_source_frame["ma_50"], errors="coerce")
+            valid_50 = (
+                np.isfinite(prices) & np.isfinite(ma_50)
+                & prices.gt(0) & ma_50.gt(0)
             )
-        else:
-            breadth_50 = 50.0
-            breadth_200 = 50.0
+            clean_b = breadth_source_frame.loc[valid_50]
+            if not clean_b.empty:
+                breadth_50 = float(
+                    (prices.loc[valid_50] > ma_50.loc[valid_50]).mean() * 100
+                )
+            if "ma_200" in breadth_source_frame.columns:
+                ma_200 = pd.to_numeric(breadth_source_frame["ma_200"], errors="coerce")
+                valid_200 = (
+                    np.isfinite(prices) & np.isfinite(ma_200)
+                    & prices.gt(0) & ma_200.gt(0)
+                )
+                clean_b_200 = breadth_source_frame.loc[valid_200]
+                if not clean_b_200.empty:
+                    breadth_200 = float(
+                        (prices.loc[valid_200] > ma_200.loc[valid_200]).mean() * 100
+                    )
 
         m_data = self._macro_close_data
+        if self.macro_data_as_of:
+            macro_as_of = pd.Timestamp(self.macro_data_as_of)
+            if macro_as_of.tzinfo is None:
+                macro_as_of = macro_as_of.tz_localize("UTC")
+            else:
+                macro_as_of = macro_as_of.tz_convert("UTC")
+            macro_age_days = (
+                pd.Timestamp.now(tz="UTC").normalize() - macro_as_of.normalize()
+            ).days
+            if macro_age_days > MAX_PRICE_AGE_DAYS:
+                m_data = pd.DataFrame()
+        else:
+            m_data = pd.DataFrame()
 
         # Extract SPY
         if not m_data.empty and "SPY" in m_data.columns:
-            spy_s = m_data["SPY"].dropna()
+            spy_s = pd.to_numeric(m_data["SPY"], errors="coerce").dropna()
+            spy_s = spy_s[np.isfinite(spy_s) & (spy_s > 0)]
+        else:
+            spy_s = pd.Series(dtype=float)
+        if len(spy_s) >= 200:
             self.spy_history = spy_s
             p_now = float(spy_s.iloc[-1])
-            ma50 = float(spy_s.iloc[-50:].mean()) if len(spy_s) >= 50 else p_now
-            ma200 = float(spy_s.iloc[-200:].mean()) if len(spy_s) >= 200 else p_now
+            ma50 = float(spy_s.iloc[-50:].mean())
+            ma200 = float(spy_s.iloc[-200:].mean())
             pct_ma50 = (p_now - ma50) / ma50 * 100
             pct_ma200 = (p_now - ma200) / ma200 * 100
         else:
-            p_now, ma50, ma200, pct_ma50, pct_ma200 = 0.0, 0.0, 0.0, 0.0, 0.0
+            self.spy_history = None
+            p_now = ma50 = ma200 = pct_ma50 = pct_ma200 = None
 
         # Extract VIX
-        vix_now = 18.0
-        if not m_data.empty and "^VIX" in m_data.columns:
-            vix_s = m_data["^VIX"].dropna()
-            if not vix_s.empty:
-                vix_now = float(vix_s.iloc[-1])
+        vix_s = (
+            pd.to_numeric(m_data["^VIX"], errors="coerce").dropna()
+            if not m_data.empty and "^VIX" in m_data.columns
+            else pd.Series(dtype=float)
+        )
+        vix_s = vix_s[np.isfinite(vix_s) & (vix_s > 0)]
+        vix_now = float(vix_s.iloc[-1]) if not vix_s.empty else None
 
         # Extract RSP vs SPY 1-Month relative return
-        rsp_spy_diff = 0.0
-        rsp_outperforming = False
+        rsp_spy_diff = None
+        rsp_outperforming = None
         if not m_data.empty and "RSP" in m_data.columns and "SPY" in m_data.columns:
-            rsp_s = m_data["RSP"].dropna()
-            spy_s = m_data["SPY"].dropna()
-            if len(rsp_s) >= 21 and len(spy_s) >= 21:
-                rsp_1mo = float(rsp_s.iloc[-1] / rsp_s.iloc[-21] - 1.0)
-                spy_1mo = float(spy_s.iloc[-1] / spy_s.iloc[-21] - 1.0)
+            rsp_s = pd.to_numeric(m_data["RSP"], errors="coerce").dropna()
+            spy_s_for_compare = pd.to_numeric(m_data["SPY"], errors="coerce").dropna()
+            common_dates = rsp_s.index.intersection(spy_s_for_compare.index).sort_values()
+            if len(common_dates) >= 22:
+                rsp_common = rsp_s.loc[common_dates]
+                spy_common = spy_s_for_compare.loc[common_dates]
+                rsp_1mo = float(rsp_common.iloc[-1] / rsp_common.iloc[-22] - 1.0)
+                spy_1mo = float(spy_common.iloc[-1] / spy_common.iloc[-22] - 1.0)
                 rsp_spy_diff = round((rsp_1mo - spy_1mo) * 100, 2)
                 rsp_outperforming = (rsp_1mo > spy_1mo)
 
         # 3. Macro Regime State Machine Logic
         vix_override = None
-        if vix_now >= 55.0:
+        if vix_now is not None and vix_now >= 55.0:
             regime_name = "Systemic Crisis (VIX > 55 Override)"
             recommended_profiles = ["Fundamental Bag", "Bear Market Shield"]
             regime_reason = f"Extreme systemic crisis override (VIX at {vix_now:.1f}). Focus on balance-sheet solvency and deep value."
             regime_color = "#ef4444"
             vix_override = "crisis_55"
-        elif vix_now >= 35.0:
+        elif vix_now is not None and vix_now >= 35.0:
             regime_name = "Panic Capitulation (VIX > 35 Override)"
             recommended_profiles = ["Dip Hunter"]
             regime_reason = f"Capitulation panic override (VIX at {vix_now:.1f}). High-probability asymmetric turnaround dip setups active."
             regime_color = "#f59e0b"
             vix_override = "panic_35"
+        elif (
+            vix_now is None
+            or p_now is None
+            or breadth_50 is None
+            or rsp_spy_diff is None
+            or rsp_outperforming is None
+        ):
+            regime_name = "Market data unavailable"
+            recommended_profiles = []
+            regime_reason = (
+                "A current, complete SPY/RSP/VIX and market-breadth snapshot is "
+                "required before a regime recommendation can be made."
+            )
+            regime_color = "#64748b"
         else:
             # Market Breadth + RSP/SPY logic
             if breadth_50 < 35.0:
@@ -330,8 +458,19 @@ class UniversalScoringEngine:
         self.sector_etf_data = {}
         for etf in ["XLK", "XLF", "XLV", "XLY", "XLP", "XLE", "XLI", "XLU", "XLB", "XLRE", "XLC"]:
             if not m_data.empty and etf in m_data.columns:
-                s = m_data[etf].dropna()
+                s = pd.to_numeric(m_data[etf], errors="coerce").dropna()
                 if len(s) >= 50:
+                    sector_as_of = pd.Timestamp(s.index[-1])
+                    if sector_as_of.tzinfo is None:
+                        sector_as_of = sector_as_of.tz_localize("UTC")
+                    else:
+                        sector_as_of = sector_as_of.tz_convert("UTC")
+                    sector_age = (
+                        pd.Timestamp.now(tz="UTC").normalize()
+                        - sector_as_of.normalize()
+                    ).days
+                    if sector_age > MAX_PRICE_AGE_DAYS or sector_age < -1:
+                        continue
                     p = float(s.iloc[-1])
                     ma50_val = float(s.iloc[-50:].mean())
                     diff = (p - ma50_val) / ma50_val * 100
@@ -352,14 +491,14 @@ class UniversalScoringEngine:
         )
         self.market_regime = {
             "symbol": "SPY",
-            "price": round(p_now, 2),
-            "ma50": round(ma50, 2),
-            "ma200": round(ma200, 2),
-            "pct_vs_ma50": round(pct_ma50, 2),
-            "pct_vs_ma200": round(pct_ma200, 2),
-            "breadth_50": round(breadth_50, 1),
-            "breadth_200": round(breadth_200, 1),
-            "vix": round(vix_now, 2),
+            "price": round(p_now, 2) if p_now is not None else None,
+            "ma50": round(ma50, 2) if ma50 is not None else None,
+            "ma200": round(ma200, 2) if ma200 is not None else None,
+            "pct_vs_ma50": round(pct_ma50, 2) if pct_ma50 is not None else None,
+            "pct_vs_ma200": round(pct_ma200, 2) if pct_ma200 is not None else None,
+            "breadth_50": round(breadth_50, 1) if breadth_50 is not None else None,
+            "breadth_200": round(breadth_200, 1) if breadth_200 is not None else None,
+            "vix": round(vix_now, 2) if vix_now is not None else None,
             "vix_override": vix_override,
             "rsp_spy_diff": rsp_spy_diff,
             "rsp_outperforming": rsp_outperforming,
@@ -371,7 +510,7 @@ class UniversalScoringEngine:
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "breadth_source": (
                 "Live scanner universe"
-                if breadth_frame is not None else "Historical baseline"
+                if breadth_frame is not None else "Awaiting live scanner universe"
             ),
             "breadth_universe_count": len(clean_b),
             "breadth_data_as_of": (
@@ -390,24 +529,27 @@ class UniversalScoringEngine:
         ticker = ticker.strip().upper()
         t = yf.Ticker(ticker)
 
-        # 1. Price History
-        hist = t.history(period="5y", auto_adjust=True)
-        if hist.empty or len(hist) < 20:
-            raise ValueError(f"Insufficient historical data found for ticker '{ticker}'. Please verify the symbol.")
+        hist = prepare_daily_price_history(
+            t.history(period="5y", auto_adjust=True),
+            ticker,
+        )
 
         close = hist["Close"]
-        volume = hist["Volume"] if "Volume" in hist.columns else pd.Series(0, index=close.index)
+        volume = (
+            pd.to_numeric(hist["Volume"], errors="coerce")
+            if "Volume" in hist.columns
+            else pd.Series(np.nan, index=close.index)
+        )
         n_days = len(close)
         p_now = float(close.iloc[-1])
 
-        # 2. Company Profile & Fundamentals (safely extracted)
         info = {}
+        fundamentals_error = None
         try:
             info = t.info or {}
-        except Exception:
-            pass
+        except Exception as error:
+            fundamentals_error = str(error)
 
-        # Try fast summary fallback if info is sparse
         name = info.get("shortName") or info.get("longName") or ticker
         raw_sector = info.get("sector", "N/A")
         sector_map = {
@@ -418,31 +560,54 @@ class UniversalScoringEngine:
             "Financial Services": "Financials",
             "Basic Materials": "Materials",
         }
-        sector = sector_map.get(raw_sector, raw_sector)
-        industry = info.get("industry", "N/A")
-        market_cap = info.get("marketCap", 0)
-        trailing_pe = info.get("trailingPE", None)
-        forward_pe = info.get("forwardPE", None)
-        peg_ratio = info.get("pegRatio", None)
-        debt_to_equity = info.get("debtToEquity", None)
-        fifty_two_high = info.get("fiftyTwoWeekHigh", float(close.max()))
-        fifty_two_low = info.get("fiftyTwoWeekLow", float(close.min()))
+        sector = sector_map.get(raw_sector, raw_sector) or "N/A"
+        industry = info.get("industry") or "N/A"
+        market_cap = _finite_number(info.get("marketCap"))
+        trailing_pe = _finite_number(info.get("trailingPE"))
+        forward_pe = _finite_number(info.get("forwardPE"))
+        peg_ratio = _finite_number(info.get("pegRatio"))
+        debt_to_equity = _finite_number(info.get("debtToEquity"))
+        if trailing_pe is not None and trailing_pe <= 0:
+            trailing_pe = None
+        if forward_pe is not None and forward_pe <= 0:
+            forward_pe = None
+        if peg_ratio is not None and peg_ratio <= 0:
+            peg_ratio = None
 
-        # 3. Technical Features
+        one_year = hist.tail(252)
+        high_source = (
+            pd.to_numeric(one_year["High"], errors="coerce")
+            if "High" in one_year.columns
+            else pd.Series(dtype=float)
+        )
+        low_source = (
+            pd.to_numeric(one_year["Low"], errors="coerce")
+            if "Low" in one_year.columns
+            else pd.Series(dtype=float)
+        )
+        high_source = high_source[np.isfinite(high_source) & (high_source > 0)]
+        low_source = low_source[np.isfinite(low_source) & (low_source > 0)]
+        fifty_two_high = float(high_source.max()) if not high_source.empty else None
+        fifty_two_low = float(low_source.min()) if not low_source.empty else None
+
         s_rets = close.pct_change().dropna()
 
         # Momentum periods
-        m1w = float(p_now / close.iloc[-5] - 1) if n_days >= 5 else 0.0
-        m1mo = float(p_now / close.iloc[-21] - 1) if n_days >= 21 else None
-        m3mo = float(p_now / close.iloc[-63] - 1) if n_days >= 63 else None
-        m6mo = float(p_now / close.iloc[-126] - 1) if n_days >= 126 else None
-        m1y = float(p_now / close.iloc[-252] - 1) if n_days >= 252 else None
+        m1w = float(p_now / close.iloc[-6] - 1) if n_days >= 6 else None
+        m1mo = float(p_now / close.iloc[-22] - 1) if n_days >= 22 else None
+        m3mo = float(p_now / close.iloc[-64] - 1) if n_days >= 64 else None
+        m6mo = float(p_now / close.iloc[-127] - 1) if n_days >= 127 else None
+        m1y = float(p_now / close.iloc[-253] - 1) if n_days >= 253 else None
 
         # 14-day RSI
         delta = close.diff()
         gain = delta.where(delta > 0, 0).rolling(14).mean().iloc[-1]
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean().iloc[-1]
-        rsi = float(100 - (100 / (1 + (gain / (loss + 1e-9))))) if not pd.isna(gain) else 50.0
+        rsi = (
+            float(100 - (100 / (1 + (gain / (loss + 1e-9)))))
+            if pd.notna(gain) and pd.notna(loss)
+            else None
+        )
 
         # Moving Averages
         ma_50_val = float(close.iloc[-50:].mean()) if n_days >= 50 else None
@@ -453,18 +618,30 @@ class UniversalScoringEngine:
 
         # Volatility (annualized)
         vol_window = min(n_days, 252)
-        ann_vol = float(s_rets.iloc[-vol_window:].std() * np.sqrt(252)) if len(s_rets) >= 20 else 0.25
+        ann_vol = (
+            float(s_rets.iloc[-vol_window:].std() * np.sqrt(252))
+            if len(s_rets) >= 20 else None
+        )
 
-        # Beta vs SPY
         if self.spy_history is not None and not self.spy_history.empty:
             spy_rets = self.spy_history.pct_change().dropna()
             beta = calculate_beta(s_rets, spy_rets)
         else:
-            beta = 1.0
+            beta = None
 
-        # Volume Surge calculation
-        curr_vol = float(volume.iloc[-1]) if len(volume) > 0 else 0
-        avg_vol_20d = float(volume.iloc[-20:].mean()) if len(volume) >= 20 else curr_vol
+        curr_vol = (
+            _finite_number(volume.iloc[-1])
+            if len(volume) and pd.notna(volume.iloc[-1]) and volume.iloc[-1] >= 0
+            else None
+        )
+        recent_volume = volume.iloc[-21:-1]
+        avg_vol_20d = (
+            _finite_number(recent_volume.mean())
+            if len(recent_volume) == 20
+            and recent_volume.notna().all()
+            and (recent_volume >= 0).all()
+            else None
+        )
 
         return {
             "ticker": ticker,
@@ -475,8 +652,8 @@ class UniversalScoringEngine:
             "price": round(p_now, 2),
             "price_as_of": hist.index[-1].strftime("%Y-%m-%d"),
             "n_days": n_days,
-            "fifty_two_high": round(float(fifty_two_high), 2) if fifty_two_high else None,
-            "fifty_two_low": round(float(fifty_two_low), 2) if fifty_two_low else None,
+            "fifty_two_high": round(fifty_two_high, 2) if fifty_two_high is not None else None,
+            "fifty_two_low": round(fifty_two_low, 2) if fifty_two_low is not None else None,
             "perf_1w": m1w,
             "momentum_1mo": m1mo,
             "momentum_3mo": m3mo,
@@ -487,30 +664,60 @@ class UniversalScoringEngine:
             "ma_200": round(ma_200_val, 2) if ma_200_val else None,
             "ma50_proximity": ma50_prox,
             "ma200_proximity": ma200_prox,
-            "annualized_vol": round(ann_vol, 4),
-            "beta": round(beta, 2),
-            "pe_ratio": float(trailing_pe) if trailing_pe and trailing_pe > 0 else None,
-            "forward_pe": float(forward_pe) if forward_pe and forward_pe > 0 else None,
-            "peg_ratio": float(peg_ratio) if peg_ratio and peg_ratio > 0 else None,
-            "debt_to_equity": float(debt_to_equity) if debt_to_equity is not None else None,
+            "annualized_vol": round(ann_vol, 4) if ann_vol is not None else None,
+            "beta": round(beta, 2) if beta is not None else None,
+            "pe_ratio": trailing_pe,
+            "forward_pe": forward_pe,
+            "peg_ratio": peg_ratio,
+            "debt_to_equity": debt_to_equity,
             "current_volume": curr_vol,
             "avg_volume": avg_vol_20d,
-            "_open_history": [float(value) for value in hist["Open"].to_numpy()],
+            "fundamentals_error": fundamentals_error,
+            "_open_history": [
+                float(value) for value in hist.get(
+                    "Open", pd.Series(np.nan, index=hist.index)
+                ).to_numpy()
+            ],
             "_close_history": [float(value) for value in close.to_numpy()],
-            "_high_history": [float(value) for value in hist["High"].to_numpy()],
-            "_low_history": [float(value) for value in hist["Low"].to_numpy()],
+            "_high_history": [
+                float(value) for value in hist.get(
+                    "High", pd.Series(np.nan, index=hist.index)
+                ).to_numpy()
+            ],
+            "_low_history": [
+                float(value) for value in hist.get(
+                    "Low", pd.Series(np.nan, index=hist.index)
+                ).to_numpy()
+            ],
         }
 
-    def analyze_entry_zones(self, ticker_data, profile_name="Dip Hunter"):
+    def analyze_entry_zones(
+        self, ticker_data, profile_name="Dip Hunter", simulations=10000
+    ):
         """Return entry-zone research without changing the live ticker score."""
-        return build_entry_zone_analysis(self, ticker_data, profile_name)
+        return build_entry_zone_analysis(
+            self, ticker_data, profile_name, simulations=simulations
+        )
 
     def evaluate_leverage_flag(self, de_ratio, sector):
         """
         Evaluates Debt-to-Equity as an informative risk flag/badge rather than
         silently penalizing or skewing the recommendation score.
         """
-        threshold = SECTOR_DE_THRESHOLDS.get(sector, 100)  # yfinance reports D/E as % (100 = 1.0x)
+        if sector == "N/A" or sector not in SECTOR_DE_THRESHOLDS:
+            return {
+                "status": "sector_reference_unavailable",
+                "label": "D/E: Sector Reference Unavailable",
+                "badge_color": "secondary",
+                "description": "A sector-specific debt-to-equity reference is unavailable.",
+                "value_str": (
+                    "N/A" if de_ratio is None or pd.isna(de_ratio)
+                    else f"{float(de_ratio) / 100:.2f}x"
+                ),
+                "threshold_str": "N/A",
+                "severity": "neutral",
+            }
+        threshold = SECTOR_DE_THRESHOLDS[sector]
 
         if de_ratio is None or pd.isna(de_ratio):
             return {
@@ -581,11 +788,12 @@ class UniversalScoringEngine:
 
     def compute_percentile_rank(self, value, baseline_series):
         """Computes empirical percentile rank (0.0 to 1.0) against the reference universe."""
-        if value is None or pd.isna(value) or baseline_series.empty:
-            return 0.5
-        clean_s = baseline_series.dropna()
+        if value is None or pd.isna(value) or baseline_series is None or baseline_series.empty:
+            return None
+        clean_s = pd.to_numeric(baseline_series, errors="coerce")
+        clean_s = clean_s[np.isfinite(clean_s)]
         if len(clean_s) == 0:
-            return 0.5
+            return None
         count_less = (clean_s < value).sum()
         count_equal = (clean_s == value).sum()
         return float((count_less + 0.5 * count_equal) / len(clean_s))
@@ -598,12 +806,42 @@ class UniversalScoringEngine:
         - Non-diluting D/E solvency flag
         - OLS return prediction
         """
-        cfg = RISK_LEVELS.get(profile_name, RISK_LEVELS["Dip Hunter"])
-        benchmark_pe = SECTOR_PE_BENCHMARKS.get(ticker_data["sector"], 23.5)
+        if profile_name not in RISK_LEVELS:
+            raise ValueError(f"Unknown scoring profile: {profile_name}")
+        cfg = RISK_LEVELS[profile_name]
+        sector = ticker_data.get("sector", "N/A")
+        benchmark_pe = SECTOR_PE_BENCHMARKS.get(sector)
+        if sector == "N/A":
+            benchmark_pe = None
 
         footnotes = []
         omitted_factors = []
         active_factors = []
+
+        if ticker_data.get("fundamentals_error"):
+            footnotes.append({
+                "type": "data",
+                "icon": "⚠️",
+                "title": "Yahoo fundamentals unavailable",
+                "message": (
+                    "Fundamental fields were omitted because Yahoo Finance did not "
+                    f"return company data: {ticker_data['fundamentals_error']}"
+                ),
+            })
+        elif any(
+            ticker_data.get(field) is not None
+            for field in ("market_cap", "pe_ratio", "forward_pe", "peg_ratio", "debt_to_equity")
+        ):
+            footnotes.append({
+                "type": "data",
+                "icon": "ℹ️",
+                "title": "Fundamental Data Has No Provider Timestamp",
+                "message": (
+                    "Yahoo company metadata does not provide a reliable as-of date for "
+                    "these fields; their freshness cannot be independently matched to "
+                    "the daily price date."
+                ),
+            })
 
         # 1. Evaluate D/E balance sheet flag
         de_flag = self.evaluate_leverage_flag(ticker_data["debt_to_equity"], ticker_data["sector"])
@@ -630,7 +868,17 @@ class UniversalScoringEngine:
                 "type": "valuation",
                 "icon": "ℹ️",
                 "title": "Valuation Factor Omitted",
-                "message": "Trailing P/E is negative or unavailable (LTM net loss). Rather than imputing a misleading sector average, valuation is omitted and remaining weights are rebased to 100%.",
+                "message": "Trailing P/E is negative or unavailable. Rather than imputing a sector average, valuation is omitted and remaining weights are rebased.",
+            })
+        elif cfg.get("pe_stretch_penalty_active") and benchmark_pe is not None:
+            footnotes.append({
+                "type": "valuation",
+                "icon": "ℹ️",
+                "title": "Static Sector P/E Reference",
+                "message": (
+                    "The P/E stretch check uses the strategy's configured sector "
+                    "reference, not a live median recalculated from current peers."
+                ),
             })
 
         # 4. Define candidate base factors and their raw weights for this profile
@@ -659,8 +907,8 @@ class UniversalScoringEngine:
 
         # Factor Definitions & Normalized Rank calculation
         raw_factor_configs = [
-            ("ma50_proximity", "50-Day MA Proximity", w_ma50, ticker_data["ma50_proximity"], "ma50_proximity"),
-            ("ma200_proximity", "200-Day MA Proximity", w_ma200, ticker_data["ma200_proximity"], "ma200_proximity"),
+            ("ma50_proximity", "50-Day MA Overextension", w_ma50, ticker_data["ma50_proximity"], "ma50_proximity"),
+            ("ma200_proximity", "200-Day MA Overextension", w_ma200, ticker_data["ma200_proximity"], "ma200_proximity"),
             ("momentum_1mo", "1-Month Momentum", base_1mo_wt, ticker_data["momentum_1mo"], "momentum_1mo"),
             ("momentum_3mo", "3-Month Momentum", base_3mo_wt, ticker_data["momentum_3mo"], "momentum_3mo"),
             ("momentum_6mo", "6-Month Momentum", base_6mo_wt, ticker_data["momentum_6mo"], "momentum_6mo"),
@@ -677,25 +925,47 @@ class UniversalScoringEngine:
             if orig_wt <= 0:
                 continue
 
-            if val is None or (isinstance(val, float) and (np.isnan(val) or val <= 0 and key == "valuation")):
+            is_missing = val is None or pd.isna(val)
+            if key == "valuation" and (
+                benchmark_pe is None or (not is_missing and val <= 0)
+            ):
+                is_missing = True
+            if is_missing:
+                reason = (
+                    "No current sector P/E reference"
+                    if key == "valuation" and benchmark_pe is None
+                    else "Missing or negative data"
+                )
                 omitted_factors.append({
                     "factor": key,
                     "name": name,
                     "original_weight": orig_wt,
-                    "reason": "Missing or negative data",
+                    "reason": reason,
                 })
                 continue
 
-            # Calculate normalized percentile
-            if (
-                not self.scoring_reference_df.empty
-                and col_name in self.scoring_reference_df.columns
-            ):
-                norm_rank = self.compute_percentile_rank(
-                    val, self.scoring_reference_df[col_name]
-                )
-            else:
-                norm_rank = 0.5
+            reference = (
+                self.scoring_reference_df[col_name]
+                if col_name in self.scoring_reference_df.columns
+                else pd.Series(dtype=float)
+            )
+            if reference.dropna().empty:
+                omitted_factors.append({
+                    "factor": key,
+                    "name": name,
+                    "original_weight": orig_wt,
+                    "reason": "No valid scoring-reference data",
+                })
+                continue
+            norm_rank = self.compute_percentile_rank(val, reference)
+            if norm_rank is None:
+                omitted_factors.append({
+                    "factor": key,
+                    "name": name,
+                    "original_weight": orig_wt,
+                    "reason": "No valid scoring-reference data",
+                })
+                continue
 
             # Directional inversion based on risk profile
             if profile_name in ["Bear Market Shield", "Fundamental Bag"]:
@@ -732,10 +1002,10 @@ class UniversalScoringEngine:
                 f["rebased_weight"] = round(f["original_weight"] * rebasing_multiplier, 4)
                 f["weighted_score"] = round(f["score_component"] * f["rebased_weight"], 4)
         else:
-            rebasing_multiplier = 1.0
-            for f in active_factors:
-                f["rebased_weight"] = f["original_weight"]
-                f["weighted_score"] = f["score_component"] * f["rebased_weight"]
+            raise ValueError(
+                "No score factors have both current ticker data and valid "
+                "cross-sectional reference data."
+            )
 
         if omitted_factors:
             rebasing_percent = round((rebasing_multiplier - 1.0) * 100, 1)
@@ -795,11 +1065,15 @@ class UniversalScoringEngine:
                 multipliers_log.append({"name": "RSI Oversold Room-to-Run Bonus", "effect": f"+{(m_rsi_os-1)*100:.1f}%", "value": m_rsi_os})
 
         # Below 200MA Bonus
-        if cfg.get("ma200_bonus_active") and ticker_data["ma_200"] is not None:
+        if (
+            cfg.get("ma200_bonus_active")
+            and ticker_data["ma_200"] is not None
+            and ticker_data["momentum_1y"] is not None
+        ):
             m_ma200 = calculate_ma200_bonus(
                 ticker_data["price"],
                 ticker_data["ma_200"],
-                ticker_data["momentum_1y"] or 0.0,
+                ticker_data["momentum_1y"],
                 max_bonus=cfg.get("ma200_bonus_max", 0.08),
                 max_depth=cfg.get("ma200_bonus_max_depth", 0.20),
             )
@@ -808,7 +1082,11 @@ class UniversalScoringEngine:
                 multipliers_log.append({"name": "Deep Dip Below 200MA Bonus", "effect": f"+{(m_ma200-1)*100:.1f}%", "value": m_ma200})
 
         # P/E Stretch Penalty (Only if P/E is valid)
-        if cfg.get("pe_stretch_penalty_active") and ticker_data["pe_ratio"] is not None:
+        if (
+            cfg.get("pe_stretch_penalty_active")
+            and ticker_data["pe_ratio"] is not None
+            and benchmark_pe is not None
+        ):
             m_pe_stretch = calculate_pe_stretch_penalty(ticker_data["pe_ratio"], benchmark_pe)
             if m_pe_stretch < 1.0:
                 final_multiplier *= m_pe_stretch
@@ -829,11 +1107,20 @@ class UniversalScoringEngine:
                 multipliers_log.append({"name": "PEG Ratio Under 1.0 Bonus", "effect": f"+{(m_peg-1)*100:.1f}%", "value": m_peg})
 
         # Overextended Momentum Penalty
-        if cfg.get("overextended_penalty_active") and ticker_data["momentum_1mo"] is not None:
-            m_overext = calculate_overextended_momentum_penalty(ticker_data["momentum_1mo"], ticker_data["perf_1w"])
-            if m_overext < 1.0:
-                final_multiplier *= m_overext
-                multipliers_log.append({"name": "Overextended Momentum Penalty", "effect": f"-{(1-m_overext)*100:.1f}%", "value": m_overext})
+        if cfg.get("overextended_penalty_active"):
+            momentum_1mo = ticker_data["momentum_1mo"]
+            perf_1w = ticker_data["perf_1w"]
+            if momentum_1mo is not None or perf_1w is not None:
+                m_overext = calculate_overextended_momentum_penalty(
+                    momentum_1mo, perf_1w
+                )
+                if m_overext < 1.0:
+                    final_multiplier *= m_overext
+                    multipliers_log.append({
+                        "name": "Overextended Momentum Penalty",
+                        "effect": f"-{(1-m_overext)*100:.1f}%",
+                        "value": m_overext,
+                    })
 
         # Exhaustion Filter
         if cfg.get("exhaustion_filter_active") and ticker_data["momentum_6mo"] is not None and ticker_data["momentum_1mo"] is not None:
@@ -843,17 +1130,21 @@ class UniversalScoringEngine:
                 multipliers_log.append({"name": "Momentum Exhaustion Filter", "effect": f"-{(1-m_exh)*100:.1f}%", "value": m_exh})
 
         # Sector Rotation Outperformance Bonus (ALL profiles if active)
-        if cfg.get("sector_outperformance_bonus_active") and ticker_data["sector"] in self.sector_3mo_medians:
-            sec_3mo_val = self.sector_3mo_medians.get(ticker_data["sector"], 0)
-            sec_6mo_val = self.sector_6mo_medians.get(ticker_data["sector"], 0)
-            m3 = ticker_data["momentum_3mo"] if ticker_data["momentum_3mo"] is not None else 0
-            m6 = ticker_data["momentum_6mo"] if ticker_data["momentum_6mo"] is not None else 0
-            excess_3mo = max(0, m3 - sec_3mo_val)
-            excess_6mo = max(0, m6 - sec_6mo_val)
-            total_excess = excess_3mo + excess_6mo
+        if cfg.get("sector_outperformance_bonus_active"):
+            sector = ticker_data["sector"]
+            excesses = []
+            m3 = _finite_number(ticker_data["momentum_3mo"])
+            sec_3mo_val = _finite_number(self.sector_3mo_medians.get(sector))
+            if m3 is not None and sec_3mo_val is not None:
+                excesses.append(max(0, m3 - sec_3mo_val))
+            m6 = _finite_number(ticker_data["momentum_6mo"])
+            sec_6mo_val = _finite_number(self.sector_6mo_medians.get(sector))
+            if m6 is not None and sec_6mo_val is not None:
+                excesses.append(max(0, m6 - sec_6mo_val))
+            total_excess = sum(excesses)
             max_bonus = cfg.get("max_sector_bonus", 1.0)
             m_sec = 1.0 + min(max_bonus - 1.0, total_excess)
-            if m_sec > 1.0:
+            if excesses and m_sec > 1.0:
                 final_multiplier *= m_sec
                 multipliers_log.append({
                     "name": f"Sector Outperformance ({ticker_data['sector']})",
@@ -862,7 +1153,13 @@ class UniversalScoringEngine:
                 })
 
         # Volume Surge Bonus
-        if cfg.get("volume_surge_bonus_active") and ticker_data["current_volume"] > 0 and ticker_data["avg_volume"] > 0:
+        if (
+            cfg.get("volume_surge_bonus_active")
+            and ticker_data["current_volume"] is not None
+            and ticker_data["avg_volume"] is not None
+            and ticker_data["current_volume"] > 0
+            and ticker_data["avg_volume"] > 0
+        ):
             m_vol = calculate_volume_surge_bonus(
                 ticker_data["current_volume"],
                 ticker_data["avg_volume"],
@@ -913,6 +1210,18 @@ class UniversalScoringEngine:
                     "effect_str": f"-{(1.0 - sec_sub_mult) * 100:.1f}% Score Haircut",
                     "desc": f"Sector ETF ({etf_sym}) is +{etf_entry['diff_pct']:.1f}% above its 50MA. Sector extended; rotation exhaust risk.",
                 }
+        elif etf_sym:
+            sector_sub_regime_info = {
+                "etf": etf_sym,
+                "status": "unavailable",
+                "label": "Sector ETF data unavailable",
+                "badge_color": "secondary",
+                "effect_str": "No sector score adjustment",
+                "desc": (
+                    f"Current {etf_sym} price and 50-day average are unavailable; "
+                    "no sector-regime multiplier was applied."
+                ),
+            }
 
         # 8. Compute Raw Score and Scaled Score (0-100)
         raw_final_score = base_score * final_multiplier
@@ -941,11 +1250,31 @@ class UniversalScoringEngine:
             stance_class = "avoid"
             stance_color = "#f87171"
 
-        # 10. OLS Statistical Return Forecast
+        # 10. OLS proxy trained against stored model outputs, not realized returns.
         forecast = self.predict_return_ols(ticker_data)
+        if forecast["expected_return"] is None:
+            footnotes.append({
+                "type": "forecast",
+                "icon": "ℹ️",
+                "title": "OLS Proxy Unavailable",
+                "message": forecast.get(
+                    "reason",
+                    "Required forecast inputs or a trained baseline proxy are unavailable.",
+                ),
+            })
+        else:
+            footnotes.append({
+                "type": "forecast",
+                "icon": "⚠️",
+                "title": "OLS Proxy Is Not a Validated Return Forecast",
+                "message": (
+                    "This output is fit to stored baseline predictions, not realized "
+                    "forward returns; its range and implied probability are not calibrated."
+                ),
+            })
 
         # 11. Universe Rank Percentile
-        universe_percentile = self.compute_universe_percentile(raw_final_score, profile_name)
+        universe_percentile = None
 
         return {
             "ticker": ticker_data["ticker"],
@@ -993,33 +1322,39 @@ class UniversalScoringEngine:
         }
 
     def predict_return_ols(self, ticker_data):
-        """Runs trained OLS model to predict expected 1-year return and CI."""
+        """Return the stored-prediction OLS proxy only when all inputs are available."""
+        unavailable = {
+            "expected_return": None,
+            "conf_lower": None,
+            "conf_upper": None,
+            "prob_positive": None,
+            "se": None,
+            "validation_status": "unavailable",
+        }
         if self.ols_model is None:
-            return {
-                "expected_return": None,
-                "conf_lower": None,
-                "conf_upper": None,
-                "prob_positive": None,
-            }
+            return {**unavailable, "reason": "No baseline proxy model is available."}
 
-        benchmark_pe = SECTOR_PE_BENCHMARKS.get(ticker_data["sector"], 23.5)
-        # Prepare feature vector: ['pe_ratio', 'debt_to_equity', 'ma50_proximity', 'ma200_proximity', 'momentum_1y', 'rsi', 'annualized_vol', 'beta']
-        x = [
-            ticker_data["pe_ratio"] if ticker_data["pe_ratio"] is not None else benchmark_pe,
-            ticker_data["debt_to_equity"] if ticker_data["debt_to_equity"] is not None else 0.0,
-            ticker_data["ma50_proximity"] if ticker_data["ma50_proximity"] is not None else 0.0,
-            ticker_data["ma200_proximity"] if ticker_data["ma200_proximity"] is not None else 0.0,
-            ticker_data["momentum_1y"] if ticker_data["momentum_1y"] is not None else 0.0,
-            ticker_data["rsi"] if ticker_data["rsi"] is not None else 50.0,
-            ticker_data["annualized_vol"] if ticker_data["annualized_vol"] is not None else 0.25,
-            ticker_data["beta"] if ticker_data["beta"] is not None else 1.0,
+        x = [_finite_number(ticker_data.get(feature)) for feature in self.features_list]
+        missing = [
+            feature for feature, value in zip(self.features_list, x)
+            if value is None
         ]
+        if missing:
+            return {
+                **unavailable,
+                "reason": "Missing required forecast inputs: " + ", ".join(missing),
+            }
 
         try:
             X_arr = np.array([x])
             y_pred, se_pred = self.ols_model.predict(X_arr)
             exp_ret = float(y_pred[0])
             se = float(se_pred[0])
+            if not np.isfinite(exp_ret) or not np.isfinite(se) or se <= 0:
+                return {
+                    **unavailable,
+                    "reason": "The proxy returned a non-finite value or zero residual uncertainty.",
+                }
             prob_pos = float(self.ols_model.normal_cdf(exp_ret / (se + 1e-9)) * 100)
             ci_lower = float(exp_ret - 1.96 * se)
             ci_upper = float(exp_ret + 1.96 * se)
@@ -1030,46 +1365,53 @@ class UniversalScoringEngine:
                 "conf_upper": round(ci_upper * 100, 2),
                 "prob_positive": round(prob_pos, 1),
                 "se": round(se * 100, 2),
+                "validation_status": "unvalidated_proxy",
+                "source": "OLS fit to stored baseline predictions, not realized returns",
             }
         except Exception as e:
             print(f"[Engine] Error running OLS prediction: {e}")
-            return {
-                "expected_return": None,
-                "conf_lower": None,
-                "conf_upper": None,
-                "prob_positive": None,
-            }
+            return {**unavailable, "reason": "The stored-prediction proxy could not be calculated."}
 
     def compute_universe_percentile(self, score, profile_name):
-        """Calculates what percentile of the baseline universe this score represents."""
-        # For a quick percentile relative to typical universe scores
-        # Usually between 0.35 and 0.85
-        pct = float(np.clip((score - 0.30) / (0.85 - 0.30) * 100.0, 1.0, 99.9))
-        return round(pct, 1)
+        """No empirical aggregate-score distribution is available for this score."""
+        return None
 
     def scan_universe(self, profile_name="Dip Hunter", top_n=10):
-        """Returns the pre-scored leaderboard from the baseline universe."""
-        if self.baseline_df.empty:
+        """Rank the current scoring reference without imputing missing features."""
+        reference = self.scoring_reference_df
+        if reference is None or reference.empty:
             return []
 
         from recommender import generate_recommendations
-        try:
-            recs = generate_recommendations(self.baseline_df, user_profile=profile_name, top_n=top_n)
-            results = []
-            for rank, (_, row) in enumerate(recs.iterrows(), 1):
-                results.append({
-                    "rank": rank,
-                    "ticker": row["ticker"],
-                    "sector": row.get("sector", "N/A"),
-                    "price": round(float(row["price"]), 2),
-                    "momentum_1y": round(float(row.get("momentum_1y", 0)) * 100, 1),
-                    "rsi": round(float(row.get("rsi", 50)), 1),
-                    "pe_ratio": round(float(row["pe_ratio"]), 1) if pd.notna(row.get("pe_ratio")) else "N/A",
-                    "score": round(float(row["recommendation_score"]) * 100, 1),
-                    "expected_return": round(float(row.get("pred_return", 0)) * 100, 1) if pd.notna(row.get("pred_return")) else None,
-                    "prob_positive": round(float(row.get("prob_positive", 50)), 1) if pd.notna(row.get("prob_positive")) else None,
-                })
-            return results
-        except Exception as e:
-            print(f"[Engine] Error scanning universe: {e}")
-            return []
+        recs = generate_recommendations(
+            reference,
+            user_profile=profile_name,
+            top_n=top_n,
+        )
+        recs = recs[
+            np.isfinite(pd.to_numeric(recs["recommendation_score"], errors="coerce"))
+        ]
+        results = []
+        for rank, (_, row) in enumerate(recs.iterrows(), 1):
+            results.append({
+                "rank": rank,
+                "ticker": row["ticker"],
+                "sector": row.get("sector", "N/A"),
+                "price": round(float(row["price"]), 2),
+                "momentum_1y": (
+                    round(float(row["momentum_1y"]) * 100, 1)
+                    if pd.notna(row.get("momentum_1y")) else None
+                ),
+                "rsi": (
+                    round(float(row["rsi"]), 1)
+                    if pd.notna(row.get("rsi")) else None
+                ),
+                "pe_ratio": (
+                    round(float(row["pe_ratio"]), 1)
+                    if pd.notna(row.get("pe_ratio")) else None
+                ),
+                "score": round(float(row["recommendation_score"]) * 100, 1),
+                "expected_return": None,
+                "prob_positive": None,
+            })
+        return results
